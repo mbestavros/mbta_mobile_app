@@ -1,0 +1,134 @@
+name: Fork Android Release
+
+# Fork-only workflow. Builds the prod Android app with fork/android/fork.init.gradle,
+# signs it in a job that runs no repository code, and publishes it to a GitHub Release.
+# A manual run builds the unsigned APK only.
+
+on:
+  push:
+    tags:
+      - fork-android-v*
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: fork-android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build unsigned APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      # No dependency cache: a release build must not restore state that other workflows wrote.
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version-file: .tool-versions
+      - name: Install rsvg-convert
+        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
+      - name: Build prod release
+        run: |
+          ./gradlew --no-daemon --no-build-cache \
+            --init-script fork/android/fork.init.gradle \
+            :androidApp:assembleProdRelease \
+            -Pandroid.injected.version.code="${GITHUB_RUN_NUMBER}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-apk
+          path: androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: Sign APK
+    if: startsWith(github.ref, 'refs/tags/fork-android-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: android-release
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-apk
+          path: ${{ runner.temp }}/unsigned
+      - name: Sign and verify
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ vars.SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPECTED_CERT_SHA256}" ]; then
+            echo "::error::Repository variable SIGNING_CERT_SHA256 is not set"
+            exit 1
+          fi
+
+          build_tools="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -n 1)"
+          unsigned="${RUNNER_TEMP}/unsigned/androidApp-prod-release-unsigned.apk"
+          mkdir -p "${RUNNER_TEMP}/signed"
+          signed="${RUNNER_TEMP}/signed/mbta-go-mbestavros-${GITHUB_REF_NAME#fork-android-}.apk"
+          keystore="${RUNNER_TEMP}/release.jks"
+
+          (umask 077 && printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore}")
+
+          "${build_tools}/zipalign" -c -p 4 "${unsigned}"
+          "${build_tools}/apksigner" sign \
+            --ks "${keystore}" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "${KEY_ALIAS}" \
+            --key-pass env:KEY_PASSWORD \
+            --out "${signed}" \
+            "${unsigned}"
+          rm -f "${keystore}"
+
+          actual="$("${build_tools}/apksigner" verify --print-certs "${signed}" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          expected="$(printf '%s' "${EXPECTED_CERT_SHA256}" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "::error::Signing certificate ${actual} does not match SIGNING_CERT_SHA256"
+            exit 1
+          fi
+
+          cd "${RUNNER_TEMP}/signed"
+          sha256sum "$(basename "${signed}")" > "$(basename "${signed}").sha256"
+      - name: Remove keystore
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/release.jks"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-apk
+          path: ${{ runner.temp }}/signed/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-apk
+          path: ${{ runner.temp }}/signed
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Release-signed prod APK built from ${GITHUB_SHA}." \
+            "${RUNNER_TEMP}"/signed/*

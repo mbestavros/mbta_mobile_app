@@ -1,0 +1,41 @@
+// Fork-only changes to the :androidApp release build. Upstream build files stay untouched.
+// Use: ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
+
+gradle.allprojects { project ->
+    if (project.path != ':androidApp') return
+
+    def forkDir = project.rootProject.file('fork/android')
+
+    project.plugins.withId('com.android.application') {
+        project.android {
+            buildTypes {
+                release {
+                    // No versionNameSuffix: AppVersion.parse() accepts only "X.Y.Z".
+                    applicationIdSuffix = '.mbestavros'
+                }
+            }
+            sourceSets {
+                release {
+                    manifest.srcFile(new File(forkDir, 'AndroidManifest.xml'))
+                    res.directories.add(new File(forkDir, 'res').path)
+                }
+            }
+        }
+    }
+
+    // Never contact MBTA's Sentry organization.
+    project.plugins.withId('io.sentry.android.gradle') {
+        def sentry = project.extensions.getByName('sentry')
+        ['telemetry', 'autoUploadProguardMapping', 'autoUploadSourceContext'].each { name ->
+            if (sentry.hasProperty(name)) {
+                sentry."$name".set(false)
+            }
+        }
+    }
+    project.tasks.configureEach { task ->
+        def name = task.name.toLowerCase()
+        if (name.contains('sentry') && name.contains('upload')) {
+            task.enabled = false
+        }
+    }
+}
