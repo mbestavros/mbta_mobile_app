@@ -23,6 +23,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      # TODO: Remove once https://github.com/actions/runner-images/issues/15018 is resolved
+      - name: Upgrade CA certificates
+        run: sudo apt-get update && sudo apt-get install -y --only-upgrade ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -55,6 +58,9 @@ jobs:
     environment: android-release
     permissions: {}
     steps:
+      # TODO: Remove once https://github.com/actions/runner-images/issues/15018 is resolved
+      - name: Upgrade CA certificates
+        run: sudo apt-get update && sudo apt-get install -y --only-upgrade ca-certificates
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsigned-apk
@@ -118,6 +124,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # TODO: Remove once https://github.com/actions/runner-images/issues/15018 is resolved
+      - name: Upgrade CA certificates
+        run: sudo apt-get update && sudo apt-get install -y --only-upgrade ca-certificates
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-apk
