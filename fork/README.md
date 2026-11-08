@@ -11,26 +11,59 @@ This folder holds fork-only build changes. Upstream files stay unchanged, so reb
 - Firebase uses placeholder values and analytics is deactivated. No data goes to MBTA's Firebase project.
 - Sentry upload tasks and Sentry plugin telemetry are off.
 
-The init script does not change the version name. `AppVersion.parse()` accepts only `X.Y.Z`,
+To use a different identity, change `applicationIdSuffix` in `fork/android/fork.init.gradle` and
+`android:label` in `fork/android/AndroidManifest.xml`.
+
+Do not add a version name suffix. `AppVersion.parse()` accepts only `X.Y.Z`,
 and the app crashes at launch if the version name has a suffix.
 
-The workflow `.github/workflows/fork-android-release.yaml` builds, signs and publishes the APK.
+The workflow `.github/workflows/fork-android-release.yaml` has three jobs:
+
+| Job | Runs repository code | Access |
+|---|---|---|
+| `build` | Yes | Read-only token, no secrets |
+| `sign` | No | Signing secrets from the `android-release` environment |
+| `release` | No | Token that can create releases, no secrets |
 
 The app uses MBTA's production backend (`mobile-app-backend.mbtace.com`). The backend supplies the
 Mapbox token and all transit data. The fork contains no API keys.
 
 ## Local setup
-Install the tools with Homebrew:
+You need these tools:
+
+- JDK 17. `.tool-versions` has the exact version that upstream uses.
+- The Android SDK command-line tools. Gradle downloads the SDK platform and build tools.
+- `rsvg-convert`, from the librsvg package.
+- The GitHub CLI (`gh`). Log in with `gh auth login`.
+
+On macOS, Homebrew can install them:
 ```
 brew install --cask temurin@17 android-commandlinetools
-brew install librsvg
+brew install librsvg gh
 ```
-Add this to `~/.zshrc`:
+
+Set `ANDROID_HOME` to the SDK folder and add `platform-tools` to `PATH` in your shell profile:
 ```
-export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export ANDROID_HOME=<path to the Android SDK>
 export PATH="$ANDROID_HOME/platform-tools:$PATH"
 ```
-Accept the SDK licenses once: `sdkmanager --licenses`.
+With the Homebrew package, the SDK folder is `$(brew --prefix)/share/android-commandlinetools`.
+
+Accept the SDK licenses and install `adb`:
+```
+sdkmanager --licenses
+sdkmanager platform-tools
+```
+
+Set your git identity before you commit. If you do not, git can use your machine's hostname,
+and a push makes that hostname public:
+```
+git config user.name "<your name>"
+git config user.email "<your GitHub noreply address>"
+```
+
+Do not install the `pre-commit` hooks unless you also install `xcodegen`.
+The hooks run `xcodegen` after each checkout, merge and rebase.
 
 ## Build locally
 ```
@@ -39,38 +72,134 @@ Accept the SDK licenses once: `sdkmanager --licenses`.
 The output is `androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk`.
 
 ## One-time GitHub setup
+Do these steps in order. Set `REPO` first, and use it in each command:
+```
+REPO=<owner>/<repo>
+```
+Always give `--repo`. When a clone has an `upstream` remote, `gh` can select the upstream repository.
+
+### 1. Disable upstream workflows
+1. Open the Actions tab of the fork. If GitHub asks, enable workflows.
+2. Disable the upstream workflows that have their own triggers. They need MBTA secrets or MBTA runners:
+   ```
+   for wf in android-dev-orange-deploy android-prod-deploy android-staging-deploy \
+     ios-dev-orange-deploy ios-prod-deploy ios-staging-deploy test-older-ios ci cache-cleanup; do
+     gh workflow disable "$wf.yaml" --repo "$REPO"
+   done
+   ```
+3. Check the result:
+   ```
+   gh workflow list --all --repo "$REPO"
+   ```
+   Check: the nine workflows are not `active`. Keep the `workflow_call` workflows enabled
+   (`build-android`, `build-ios`, `test-android`, `test-ios`, `pre-commit`, `zizmor`).
+   They run only when another workflow calls them, and the workflows that call them are disabled.
+
+### 2. Restrict GitHub Actions
+1. Allow only GitHub-owned actions and the Gradle wrapper check. Require full commit SHA pins:
+   ```
+   P="repos/$REPO/actions/permissions"
+   gh api -X PUT "$P" -F enabled=true -f allowed_actions=selected -F sha_pinning_required=true
+   gh api -X PUT "$P/selected-actions" -F github_owned_allowed=true -F verified_allowed=false \
+     -f 'patterns_allowed[]=gradle/actions/wrapper-validation@*'
+   gh api -X PUT "$P/fork-pr-contributor-approval" -f approval_policy=all_external_contributors
+   ```
+2. In Settings > Actions > General, under "Workflow permissions":
+   1. Select "Read repository contents and packages permissions".
+   2. Turn off "Allow GitHub Actions to create and approve pull requests".
+
+### 3. Protect the repository
+1. In Settings > Advanced Security, turn on secret scanning and push protection.
+2. In Settings > General > Releases, turn on release immutability.
+3. In Settings > Rules > Rulesets, create a tag ruleset:
+   1. Set enforcement to "Active".
+   2. Target the tags that match `fork-android-v*`.
+   3. Restrict creations, updates and deletions.
+   4. Add the `Repository admin` role to the bypass list. A personal repository accepts roles, not people.
+4. Do not block force pushes on `main`. A rebase on upstream needs a force push.
+5. Turn on 2FA or a passkey for your GitHub account.
+
+### 4. Create the signing key
 1. Create a keystore outside the repo:
    ```
    keytool -genkeypair -v -keystore ~/mbta-go-fork.jks -alias release \
      -keyalg RSA -keysize 4096 -validity 10000
    ```
-2. Back up the keystore and its passwords offline. Without them, installed copies cannot update.
-3. Get the certificate SHA-256:
+   `keytool` can ask for one password only. A PKCS12 keystore uses one password for the keystore and the key.
+2. Make the file private:
+   ```
+   chmod 600 ~/mbta-go-fork.jks
+   ```
+3. Back up the keystore and its password offline. Without them, installed copies cannot update.
+4. Get the certificate fingerprint:
    ```
    keytool -list -v -keystore ~/mbta-go-fork.jks -alias release | grep 'SHA256:'
    ```
-4. Create the environment `android-release` in the GitHub repo settings.
-   Add yourself as a required reviewer. Allow deployments only from tags that match `fork-android-v*`.
-5. Add the environment secrets:
+
+### 5. Create the environment and secrets
+1. In Settings > Environments, create the environment `android-release`.
+2. Under "Deployment branches and tags", select "Selected branches and tags".
+   Add a rule of type "Tag" with the pattern `fork-android-v*`.
+3. Add yourself as a required reviewer. If the search box finds nothing, use the API.
+   This command keeps the tag rule:
    ```
-   base64 -i ~/mbta-go-fork.jks | gh secret set KEYSTORE_BASE64 --env android-release
-   gh secret set KEYSTORE_PASSWORD --env android-release
-   gh secret set KEY_ALIAS --env android-release
-   gh secret set KEY_PASSWORD --env android-release
+   ID=$(gh api users/<your GitHub username> --jq .id)
+   gh api -X PUT "repos/$REPO/environments/android-release" --input - <<EOF
+   {
+     "reviewers": [{ "type": "User", "id": $ID }],
+     "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true }
+   }
+   EOF
    ```
-6. Add the repo variable `SIGNING_CERT_SHA256` with the value from step 3:
+4. Add the environment secrets. Do not add repository-level copies:
    ```
-   gh variable set SIGNING_CERT_SHA256
+   base64 < ~/mbta-go-fork.jks | gh secret set KEYSTORE_BASE64 --env android-release --repo "$REPO"
+   gh secret set KEYSTORE_PASSWORD --env android-release --repo "$REPO"
+   gh secret set KEY_ALIAS --env android-release --repo "$REPO"
+   gh secret set KEY_PASSWORD --env android-release --repo "$REPO"
    ```
-7. Disable the upstream workflows that have their own triggers. They need MBTA secrets or MBTA runners:
+   The value of `KEY_ALIAS` is `release`. If `keytool` asked for one password only, use that
+   password for `KEYSTORE_PASSWORD` and for `KEY_PASSWORD`.
+5. Add the fingerprint from step 4 as a repository variable:
    ```
-   for wf in android-dev-orange-deploy android-prod-deploy android-staging-deploy \
-     ios-dev-orange-deploy ios-prod-deploy ios-staging-deploy test-older-ios ci cache-cleanup; do
-     gh workflow disable "$wf.yaml" --repo mbestavros/mbta_mobile_app
-   done
+   gh variable set SIGNING_CERT_SHA256 --repo "$REPO"
    ```
-   Keep the `workflow_call` workflows enabled (`build-android`, `build-ios`, `test-android`,
-   `test-ios`, `pre-commit`, `zizmor`). They run only when a disabled workflow calls them.
+   Enter the hexadecimal value only. Do not include `SHA256:`. Colons are permitted.
+
+### 6. Test the workflow
+1. Push the fork files to `main`:
+   ```
+   git push origin main
+   ```
+   If you push over HTTPS, the token needs the `workflow` scope. Add it with `gh auth refresh -s workflow`.
+2. Run the workflow manually. A manual run builds the unsigned APK only:
+   ```
+   gh workflow run fork-android-release.yaml --repo "$REPO" --ref main
+   gh run watch --repo "$REPO"
+   ```
+   Check: `build` passes. `sign` and `release` show as skipped.
+3. Make a release. See "Release".
+
+## Release
+1. Get the upstream version name:
+   ```
+   grep 'versionName =' androidApp/build.gradle.kts
+   ```
+2. Make a tag from the commit to release. Use the version name and a build number.
+   Increase the build number for each tag of the same version:
+   ```
+   git tag fork-android-v<version>-<n>
+   git push origin fork-android-v<version>-<n>
+   ```
+   Example: `fork-android-v2.2.1-1`.
+3. Wait for `build` to finish. Then approve the `android-release` deployment in the Actions run.
+4. Download the APK from the GitHub Release. You do not need the `.idsig` file.
+5. Install the APK on your phone.
+
+The workflow sets the version code from the workflow run number, so each new run can update the app.
+
+If a release fails, make a new tag with a higher build number. Do not run the old tag again.
+A tag uses the workflow file from its own commit. An immutable release cannot be replaced.
 
 ## Update from upstream
 Do these steps in order. Each step has a check. Stop if a check fails.
@@ -133,41 +262,49 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    git diff --stat upstream/main
    ```
    Check: the list contains only `.github/workflows/fork-*.yaml` and files in `fork/`.
+   Your own feature commits are also listed if they are on `main`.
 
 ### 4. Test locally
-1. Run the unit tests and lint. Do not run iOS tasks:
+1. Check formatting. Delete the generated dependency file first, because it fails the format check.
+   Git ignores this file and the build makes it again:
    ```
+   rm -f shared/src/androidMain/kotlin/com/mbta/tid/mbta_app/model/Dependency.android.kt
    ./gradlew spotlessCheck
-   ./gradlew shared:check androidApp:check \
-     -x shared:jvmTest -x shared:iosSimulatorArm64Test -x shared:iosX64Test
    ```
-   Check: both commands show `BUILD SUCCESSFUL`. Run `spotlessCheck` before any build.
-   A build generates `Dependency.android.kt`, and `spotlessCheck` fails on that generated file.
-2. Build the fork release:
+   Check: `BUILD SUCCESSFUL`.
+2. Run the unit tests and lint. These flags skip the iOS tests and the format check that you did in step 1:
+   ```
+   ./gradlew shared:check androidApp:check -x shared:jvmTest -x shared:spotlessKotlinCheck \
+     -x shared:iosSimulatorArm64Test -x shared:iosX64Test
+   ```
+   Check: `BUILD SUCCESSFUL`. If Gradle reports that an iOS task does not exist, remove that flag.
+3. Build the fork release:
    ```
    ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
    ```
    Check: `BUILD SUCCESSFUL`. The Sentry upload tasks show `SKIPPED`.
-3. Check the APK:
+4. Check the APK:
    ```
    BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
    "$BT/aapt2" dump badging androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk | head -n 1
    ```
-   Check: the package name is `com.mbta.tid.mbta_app.mbestavros`. The version name is `X.Y.Z` with no suffix.
-4. Optional: sign the APK with a test keystore and install it on a phone. See "Test on a phone".
+   Check: the package name has the fork suffix. The version name is `X.Y.Z` with no suffix.
+5. Optional: test the APK on a phone. See "Test on a phone".
 
 ### 5. Push
-1. Disable each new workflow from step 2.2. Do this before you push, or the push can start it:
-   ```
-   gh workflow disable <file>.yaml --repo mbestavros/mbta_mobile_app
-   ```
-   A workflow file must exist on GitHub before you can disable it. If the file is new, push first,
-   then disable it at once and cancel any run it started (`gh run list`, `gh run cancel <id>`).
-2. Push the rebased `main`. The rebase changed the fork commits, so a force push is necessary:
+1. Push the rebased `main`. The rebase changed the fork commits, so a force push is necessary:
    ```
    git push --force-with-lease origin main
    ```
    `--force-with-lease` stops the push if GitHub has commits that you did not fetch.
+2. Disable each new workflow from step 2.2 immediately. A workflow file must be on GitHub before
+   you can disable it. If the push started the workflow, cancel the run:
+   ```
+   REPO=<owner>/<repo>
+   gh workflow disable <file>.yaml --repo "$REPO"
+   gh run list --repo "$REPO"
+   gh run cancel <run id> --repo "$REPO"
+   ```
 3. Rebase your feature branches on the new `main`:
    ```
    git switch <branch>
@@ -175,19 +312,7 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    ```
 
 ### 6. Release
-1. Get the upstream version name:
-   ```
-   grep 'versionName =' androidApp/build.gradle.kts
-   ```
-2. Make a tag. Use the version name and a build number. Increase the build number for each release
-   of the same version:
-   ```
-   git tag fork-android-v<version>-<n>
-   git push origin fork-android-v<version>-<n>
-   ```
-   Example: `fork-android-v2.2.1-1`.
-3. In the Actions run, approve the `android-release` deployment.
-4. Download the APK from the GitHub Release. Install it on your phone as an update.
+Make a new release. See "Release".
 
 ## Test on a phone
 1. Make a test keystore outside the repo:
@@ -197,13 +322,18 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    ```
 2. Sign the APK:
    ```
+   BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
    "$BT/apksigner" sign --ks /tmp/test.jks --ks-key-alias release --out /tmp/test.apk \
      androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk
    ```
-3. Connect the phone with wireless debugging (`adb pair`, then `adb connect`).
-   Keep the screen on. The connection can drop while the phone sleeps.
-4. Install with `adb install -r --no-incremental /tmp/test.apk`.
+3. Connect the phone with USB debugging or wireless debugging (`adb pair`, then `adb connect`).
+   For wireless debugging, keep the screen on. The connection can drop while the phone sleeps.
+4. Install the APK:
+   ```
+   adb install -r --no-incremental /tmp/test.apk
+   ```
    A test-signed APK cannot update the release APK. Uninstall one before you install the other.
+   An uninstall deletes the app's data.
 5. Open the app. Check that the map and predictions load.
 6. If the app crashes, read the crash log:
    ```
@@ -217,3 +347,4 @@ Do these steps in order. Each step has a check. Stop if a check fails.
 - There is no crash reporting.
 - The Mapbox SDK can send its own telemetry. The fork does not change this.
 - The fork depends on MBTA's backend. If MBTA adds app attestation or rate limits, the fork can stop working.
+- CI does not run upstream's unit tests or emulator tests. Run the unit tests locally.
