@@ -1,17 +1,25 @@
 # Fork: Android release build
 
-This folder holds fork-only build changes. Upstream files stay unchanged, so rebases on
-`mbta/mobile_app` do not conflict.
+This folder holds fork-only build changes and features. Upstream files stay unchanged, so rebases on
+`mbta/mobile_app` do not conflict. Do not edit upstream files for a fork feature. Put the feature in
+`fork/android/<feature>/` and add it to the build from `fork/android/fork.init.gradle`.
 
 ## What the fork build changes
-`fork/android/fork.init.gradle` changes the `:androidApp` release build type:
+`fork/android/fork.init.gradle` applies these scripts:
+
+| Script | Build types | Change |
+|---|---|---|
+| `identity.gradle` | Release | The fork identity (see below) |
+| `liveUpdate/liveUpdate.gradle` | All | The Live Update feature (see "Live Update") |
+
+`identity.gradle` changes the `:androidApp` release build type:
 
 - The application ID is `com.mbta.tid.mbta_app.mbestavros`. The app installs next to the official app.
 - The app label is "MBTA Go (mbestavros)".
 - Firebase uses placeholder values and analytics is deactivated. No data goes to MBTA's Firebase project.
 - Sentry upload tasks and Sentry plugin telemetry are off.
 
-To use a different identity, change `applicationIdSuffix` in `fork/android/fork.init.gradle` and
+To use a different identity, change `applicationIdSuffix` in `fork/android/identity.gradle` and
 `android:label` in `fork/android/AndroidManifest.xml`.
 
 Do not add a version name suffix. `AppVersion.parse()` accepts only `X.Y.Z`,
@@ -64,6 +72,20 @@ git config user.email "<your GitHub noreply address>"
 
 Do not install the `pre-commit` hooks unless you also install `xcodegen`.
 The hooks run `xcodegen` after each checkout, merge and rebase.
+
+Install the fork loader, so that Android Studio and every Gradle command apply the fork changes.
+Without it, Android Studio builds do not include fork features. Create
+`~/.gradle/init.d/mbta-fork.gradle` with this content:
+```groovy
+// Applies the MBTA Go fork build changes to any checkout that has fork/android/fork.init.gradle.
+gradle.settingsEvaluated { settings ->
+    def forkScript = new File(settings.rootDir, 'fork/android/fork.init.gradle')
+    if (forkScript.exists()) gradle.apply(from: forkScript)
+}
+```
+The loader has no effect on other projects. `fork.init.gradle` applies only one time, so you can
+also give `--init-script` when the loader is installed. After you install the loader, sync the
+project in Android Studio.
 
 ## Build locally
 ```
@@ -271,13 +293,19 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    rm -f shared/src/androidMain/kotlin/com/mbta/tid/mbta_app/model/Dependency.android.kt
    ./gradlew spotlessCheck
    ```
-   Check: `BUILD SUCCESSFUL`.
+   Check: `BUILD SUCCESSFUL`. When the fork script applies, `spotlessCheck` also checks the Kotlin
+   files in `fork/` (task `spotlessForkKotlinCheck`). To fix the format, run
+   `./gradlew spotlessForkKotlinApply`.
 2. Run the unit tests and lint. These flags skip the iOS tests and the format check that you did in step 1:
    ```
    ./gradlew shared:check androidApp:check -x shared:jvmTest -x shared:spotlessKotlinCheck \
      -x shared:iosSimulatorArm64Test -x shared:iosX64Test
    ```
    Check: `BUILD SUCCESSFUL`. If Gradle reports that an iOS task does not exist, remove that flag.
+   With the loader installed, this also compiles and tests the fork features. Without the loader,
+   add `--init-script fork/android/fork.init.gradle`.
+   If the compiler reports errors in `fork/`, upstream changed an API that a fork feature uses.
+   See the list of upstream APIs in "Live Update".
 3. Build the fork release:
    ```
    ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
@@ -335,12 +363,63 @@ Make a new release. See "Release".
    A test-signed APK cannot update the release APK. Uninstall one before you install the other.
    An uninstall deletes the app's data.
 5. Open the app. Check that the map and predictions load.
-6. If the app crashes, read the crash log:
+6. Open a station, select a direction and a train, and tap Follow. Check that a Live Update shows.
+   See "Live Update" for the full test.
+7. If the app crashes, read the crash log:
    ```
    adb logcat -d -b crash
    ```
    Firebase "API key not valid" errors are expected. They come from the placeholder values.
-7. Delete `/tmp/test.jks` and `/tmp/test.apk`.
+8. Delete `/tmp/test.jks` and `/tmp/test.apk`.
+
+## Live Update
+When you tap Follow on a train, the app shows an Android Live Update. On Android 16 and later, it
+shows on the lock screen and as a chip in the status bar. On earlier versions, it is an ongoing
+notification with a progress bar.
+
+- The Live Update shows the time until the train arrives at your stop.
+- On the trip page, a "Live update" button opens a list of the next stops. Select the stop where you
+  get off. After you board, the Live Update shows the time until you arrive.
+- Without a destination, the Live Update ends when the train leaves your stop. With a destination,
+  it ends when the train arrives there.
+- Use "Stop" in the notification, or "Stop live update" in the list, to end it. If you swipe it
+  away, it does not come back for that trip.
+
+The feature does not change upstream files:
+
+| Part | How it connects to the app |
+|---|---|
+| `liveUpdate/AndroidManifest.xml` | `liveUpdate.gradle` adds it to each variant with the variant API |
+| `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
+| `FollowDetector` | Reads the map and trip details view models to detect the trip page |
+| `LiveUpdateOverlayInstaller` | Adds the "Live update" button above `MainActivity`'s content |
+| `LiveUpdateService` | A foreground service with its own websocket. The app closes its socket in the background. |
+
+The feature uses these upstream APIs. If upstream changes one, the fork does not compile:
+
+- `ITripDetailsViewModel.models` (`context`, `tripData.tripFilter`) and `IMapViewModel.models`
+  (`LayerState.TripSelected.following`).
+- `makeNativeModule`, `ErrorBannerStateRepository`, `DebugRepository`, and the repository
+  interfaces for trips, trip predictions, vehicles and global data.
+- `TripDetailsStopList.fromPieces`, `TripDetailsStopList.splitForTarget` and `Stop.resolveParent`.
+- In `androidApp`: `appVariant`, `decodeMessage`, `Socket.wrapped()`, `MainActivity`,
+  `MyApplicationTheme`, `notificationPermissionState`, `formattedTime()`,
+  `R.drawable.app_icon_monochrome` and `R.string.current_locale`.
+
+Run the feature tests:
+```
+./gradlew :androidApp:testStagingDebugUnitTest --tests '*liveUpdate*'
+```
+
+Test on a phone:
+1. Follow a train. Check that a status bar chip and a lock screen card show.
+2. Check that the Live Update is promoted:
+   ```
+   adb shell dumpsys notification --noredact | grep -A20 live_updates | grep -i promot
+   ```
+3. On the trip page, tap "Live update" and select a destination. Check that the notification changes.
+4. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
+5. Tap "Stop". Check that the notification goes away.
 
 ## Known limitations
 - Push notifications do not work. MBTA's backend sends them through MBTA's Firebase project.
@@ -348,3 +427,5 @@ Make a new release. See "Release".
 - The Mapbox SDK can send its own telemetry. The fork does not change this.
 - The fork depends on MBTA's backend. If MBTA adds app attestation or rate limits, the fork can stop working.
 - CI does not run upstream's unit tests or emulator tests. Run the unit tests locally.
+- The Live Update does not show service alerts. The trip page still shows them.
+- The Live Update strings are in English only.
