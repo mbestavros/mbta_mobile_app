@@ -1,41 +1,12 @@
-// Fork-only changes to the :androidApp release build. Upstream build files stay untouched.
+// Entry point for all fork-only build changes. Upstream build files stay untouched.
 // Use: ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
+// Or install the loader in ~/.gradle/init.d/ (see fork/README.md) to apply it to every build.
 
-gradle.allprojects { project ->
-    if (project.path != ':androidApp') return
+// The loader and --init-script can both be active. Apply only once.
+if (gradle.ext.has('mbtaForkApplied')) return
+gradle.ext.mbtaForkApplied = true
 
-    def forkDir = project.rootProject.file('fork/android')
+def forkAndroidDir = buildscript.sourceFile.parentFile
 
-    project.plugins.withId('com.android.application') {
-        project.android {
-            buildTypes {
-                release {
-                    // No versionNameSuffix: AppVersion.parse() accepts only "X.Y.Z".
-                    applicationIdSuffix = '.mbestavros'
-                }
-            }
-            sourceSets {
-                release {
-                    manifest.srcFile(new File(forkDir, 'AndroidManifest.xml'))
-                    res.directories.add(new File(forkDir, 'res').path)
-                }
-            }
-        }
-    }
-
-    // Never contact MBTA's Sentry organization.
-    project.plugins.withId('io.sentry.android.gradle') {
-        def sentry = project.extensions.getByName('sentry')
-        ['telemetry', 'autoUploadProguardMapping', 'autoUploadSourceContext'].each { name ->
-            if (sentry.hasProperty(name)) {
-                sentry."$name".set(false)
-            }
-        }
-    }
-    project.tasks.configureEach { task ->
-        def name = task.name.toLowerCase()
-        if (name.contains('sentry') && name.contains('upload')) {
-            task.enabled = false
-        }
-    }
-}
+gradle.apply(from: new File(forkAndroidDir, 'identity.gradle'))
+gradle.apply(from: new File(forkAndroidDir, 'liveUpdate/liveUpdate.gradle'))

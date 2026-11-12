@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fork-only strings. English only: other locales fall back to these. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="live_update_channel_name">Live Updates</string>
+    <string name="live_update_channel_description">Live progress of a trip that you follow</string>
+
+    <string name="live_update_title">%1$s to %2$s</string>
+    <string name="live_update_placeholder_title">Live update</string>
+    <string name="live_update_placeholder_text">Finding your train…</string>
+
+    <string name="live_update_text_boarding">Boarding at %1$s</string>
+    <string name="live_update_text_arriving">Arriving at %1$s</string>
+    <string name="live_update_text_approaching">1 min to %1$s</string>
+    <string name="live_update_text_minutes">%1$d min to %2$s</string>
+    <string name="live_update_text_clock_time">Arrives at %2$s at %1$s</string>
+    <string name="live_update_text_unknown">Waiting for predictions for %1$s</string>
+    <plurals name="live_update_stops_away">
+        <item quantity="one">%1$s · %2$d stop away</item>
+        <item quantity="other">%1$s · %2$d stops away</item>
+    </plurals>
+
+    <string name="live_update_chip_boarding">Board</string>
+    <string name="live_update_chip_arriving">Now</string>
+    <string name="live_update_chip_minutes">%1$d min</string>
+
+    <string name="live_update_finished_arrived">Arrived at %1$s</string>
+    <string name="live_update_finished_departed">Left %1$s</string>
+    <string name="live_update_finished_trip_ended">Trip complete</string>
+    <string name="live_update_finished_cancelled">Trip cancelled at %1$s</string>
+    <string name="live_update_finished_already_passed">Already past %1$s</string>
+
+    <string name="live_update_action_stop">Stop</string>
+
+    <string name="live_update_overlay_label">Live update</string>
+    <string name="live_update_overlay_destination">To %1$s</string>
+    <string name="live_update_overlay_choose_destination">Choose destination</string>
+    <string name="live_update_sheet_title">Where do you get off?</string>
+    <string name="live_update_sheet_no_destination">No destination</string>
+    <string name="live_update_sheet_no_destination_detail">End the live update when the train leaves %1$s</string>
+    <string name="live_update_sheet_stop">Stop live update</string>
+    <string name="live_update_sheet_enable">Turn on Live Updates in settings</string>
+    <string name="live_update_sheet_loading">Loading stops…</string>
+</resources>
