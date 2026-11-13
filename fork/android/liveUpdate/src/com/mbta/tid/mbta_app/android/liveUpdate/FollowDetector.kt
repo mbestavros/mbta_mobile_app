@@ -19,15 +19,20 @@ object FollowDetector {
     fun isFollowingPage(mapState: MapViewModel.State): Boolean =
         (mapState.layerState as? MapViewModel.LayerState.TripSelected)?.following == true
 
+    /**
+     * The filter of the open trip page. Null until the trip loads. The page can show a vehicle with
+     * no trip data ("not available"), and the service can't track that.
+     */
     fun followedFilter(
         isFollowingPage: Boolean,
         tripState: TripDetailsViewModel.State,
-    ): TripDetailsPageFilter? =
-        if (isFollowingPage && tripState.context == TripDetailsViewModel.Context.TripDetails) {
-            tripState.tripData?.tripFilter
-        } else {
-            null
+    ): TripDetailsPageFilter? {
+        if (!isFollowingPage || tripState.context != TripDetailsViewModel.Context.TripDetails) {
+            return null
         }
+        val tripData = tripState.tripData ?: return null
+        return tripData.tripFilter.takeIf { tripData.trip?.id == it.tripId }
+    }
 
     /** Emits the filter each time the user opens the trip page for a trip. */
     fun follows(

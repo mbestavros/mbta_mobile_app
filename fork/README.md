@@ -389,6 +389,11 @@ notification with a progress bar.
     until you arrive.
   - On other screens, it shows "Return to trip tracking". Tap it to open stop details with the
     trip selected. Tap Follow to open the trip page.
+- If you open a trip page with a tap on a train on the map, the Live Update does not start. If no
+  trip is tracked, the pill shows "Track this train". Tap it to start the Live Update.
+- The Live Update starts only after the trip data loads. Some trains show "not available" on the
+  trip page because the app can't load their trip. These trains can't be tracked. If no trip data
+  comes in 2 minutes, the Live Update ends with "No trip data for this train".
 - Tap the notification to open stop details with the trip selected.
 - Without a destination, the Live Update ends when the train leaves your stop. With a destination,
   it ends when the train arrives there.
@@ -402,14 +407,19 @@ The feature does not change upstream files:
 | `liveUpdate/AndroidManifest.xml` | `liveUpdate.gradle` adds it to each variant with the variant API |
 | `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
 | `FollowDetector` | Reads the map and trip details view models to detect the trip page |
+| `TripPageEntry` | Wraps the Koin `Analytics` instance to see the `tapped_vehicle` event of a map tap |
 | `LiveUpdateOverlayInstaller` | Adds the pill above `MainActivity`'s content |
 | `LiveUpdateDeepLink` | Opens the trip with the app's stop deep link |
 | `LiveUpdateService` | A foreground service with its own websocket. The app closes its socket in the background. |
 
 The feature uses these upstream APIs. If upstream changes one, the fork does not compile:
 
-- `ITripDetailsViewModel.models` (`context`, `tripData.tripFilter`) and `IMapViewModel.models`
-  (`LayerState.TripSelected.following`).
+- `ITripDetailsViewModel.models` (`context`, `tripData.tripFilter`, `tripData.trip`) and
+  `IMapViewModel.models` (`LayerState.TripSelected.following`).
+- `Analytics` (the abstract `logEvent(String, Map)` and `setUserProperty(String, String)`) and the
+  `tapped_vehicle` event that `MapAndSheetPage.handleVehicleTap` logs before it opens the trip
+  page. These are not checked when the fork compiles. If they change, a map tap starts the Live
+  Update again. The `TripPageEntryTest` analytics test fails if the methods change.
 - `makeNativeModule`, `ErrorBannerStateRepository`, `DebugRepository`, and the repository
   interfaces for trips, trip predictions, vehicles and global data.
 - `TripDetailsStopList.fromPieces`, `TripDetailsStopList.splitForTarget` and `Stop.resolveParent`.
@@ -438,9 +448,11 @@ Test on a phone:
    notification changes and that its header shows the arrival time and the ride time.
 4. Go to Favorites, Nearby and More. Check that "Return to trip tracking" shows above the tabs.
    Tap it. Check that stop details opens with the trip selected.
-5. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
-6. Tap the notification. Check that stop details opens with the trip selected.
-7. Tap "Stop". Check that the notification goes away.
+5. Stop tracking. In stop details, tap a train on the map. Check that no Live Update starts and
+   that "Track this train" shows. Tap it. Check that the Live Update starts.
+6. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
+7. Tap the notification. Check that stop details opens with the trip selected.
+8. Tap "Stop". Check that the notification goes away.
 
 ## Known limitations
 - Push notifications do not work. MBTA's backend sends them through MBTA's Firebase project.

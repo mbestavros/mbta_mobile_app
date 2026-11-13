@@ -95,7 +95,7 @@ class LiveUpdateService : Service() {
 
         trackingJob = scope.launch {
             val startedAt = EasternTimeInstant.now()
-            var lastSnapshotAt = startedAt
+            var lastSnapshotAt: EasternTimeInstant? = null
             var anchor: TrackingAnchor? = null
             var wasOnTrip = false
             var boardingTime: EasternTimeInstant? = null
@@ -104,7 +104,20 @@ class LiveUpdateService : Service() {
                 while (true) {
                     delay(WATCHDOG_INTERVAL)
                     val now = EasternTimeInstant.now()
-                    if (now - lastSnapshotAt > NO_DATA_TIMEOUT || now - startedAt > MAX_DURATION) {
+                    val lastData = lastSnapshotAt
+                    if (lastData == null && now - startedAt > FIRST_DATA_TIMEOUT) {
+                        Log.i(TAG, "Stopping: no trip data for ${newRequest.tripId}")
+                        finish(
+                            LiveUpdateText(
+                                strings.string(R.string.live_update_placeholder_title),
+                                strings.string(R.string.live_update_finished_no_data),
+                                chip = null,
+                            ),
+                        )
+                    } else if (
+                        (lastData != null && now - lastData > NO_DATA_TIMEOUT) ||
+                            now - startedAt > MAX_DURATION
+                    ) {
                         Log.i(TAG, "Stopping: no data or too long")
                         finish(null)
                     }
@@ -229,6 +242,7 @@ class LiveUpdateService : Service() {
         private const val TAG = "LiveUpdate"
         private val TICK_INTERVAL = 15.seconds
         private val WATCHDOG_INTERVAL = 1.minutes
+        private val FIRST_DATA_TIMEOUT = 2.minutes
         private val NO_DATA_TIMEOUT = 10.minutes
         private val MAX_DURATION = 3.hours
     }

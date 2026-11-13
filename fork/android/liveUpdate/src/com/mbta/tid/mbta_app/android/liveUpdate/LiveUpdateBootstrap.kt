@@ -4,12 +4,15 @@ import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.mbta.tid.mbta_app.analytics.Analytics
 import com.mbta.tid.mbta_app.viewModel.IMapViewModel
 import com.mbta.tid.mbta_app.viewModel.ITripDetailsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
@@ -24,6 +27,7 @@ object LiveUpdateBootstrap {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var started = false
     private var followJob: Job? = null
+    private val tripPageEntry = TripPageEntry()
 
     fun start(application: Application, attempt: Int = 0) {
         if (started) return
@@ -37,6 +41,7 @@ object LiveUpdateBootstrap {
         }
         started = true
         loadKoinModules(module { single { LiveUpdateController(application) } })
+        observeVehicleTaps()
         LiveUpdateNotification.ensureChannel(application)
         application.registerActivityLifecycleCallbacks(LiveUpdateOverlayInstaller)
     }
@@ -51,9 +56,32 @@ object LiveUpdateBootstrap {
         val controller = koin.get<LiveUpdateController>()
         val mapViewModel = koin.get<IMapViewModel>()
         val tripDetailsViewModel = koin.get<ITripDetailsViewModel>()
+        val isFollowingPage = mapViewModel.models.map(FollowDetector::isFollowingPage)
         followJob = scope.launch {
-            FollowDetector.followsFromViewModels(mapViewModel.models, tripDetailsViewModel.models)
-                .collect { controller.onFollow(it) }
+            launch {
+                isFollowingPage.distinctUntilChanged().collect { open ->
+                    if (!open) tripPageEntry.pageClosed()
+                }
+            }
+            FollowDetector.follows(isFollowingPage, tripDetailsViewModel.models).collect {
+                if (tripPageEntry.consumeOpenedFromMap()) {
+                    controller.onOpenedFromMap(it)
+                } else {
+                    controller.onFollow(it)
+                }
+            }
         }
+    }
+
+    /** Must run before the UI first gets Analytics from Koin. */
+    private fun observeVehicleTaps() {
+        val koin = GlobalContext.get()
+        val analytics =
+            ObservingAnalytics.wrap(koin.get<Analytics>()) { name ->
+                if (name == TripPageEntry.VEHICLE_TAP_EVENT) {
+                    handler.post { tripPageEntry.vehicleTapped() }
+                }
+            } ?: return
+        loadKoinModules(module { single { analytics } })
     }
 }

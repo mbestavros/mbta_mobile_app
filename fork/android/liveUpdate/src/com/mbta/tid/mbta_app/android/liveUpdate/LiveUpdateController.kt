@@ -35,9 +35,30 @@ class LiveUpdateController(private val context: Context) {
      */
     private val doneTripIds = mutableSetOf<String>()
 
+    /** A trip page opened from the map. The overlay offers to track it. */
+    private val _offer = MutableStateFlow<TripDetailsPageFilter?>(null)
+    val offer: StateFlow<TripDetailsPageFilter?> = _offer.asStateFlow()
+
     fun onFollow(filter: TripDetailsPageFilter) {
         val tripId = filter.tripId
         if (_session.value?.request?.tripId == tripId || tripId in doneTripIds) return
+        requestStart(filter)
+    }
+
+    fun onOpenedFromMap(filter: TripDetailsPageFilter) {
+        _offer.value = filter
+    }
+
+    /** The user tapped the offer. This also tracks a trip that the user stopped before. */
+    fun trackOffer() {
+        val filter = _offer.value ?: return
+        _offer.value = null
+        doneTripIds -= filter.tripId
+        if (_session.value?.request?.tripId != filter.tripId) requestStart(filter)
+    }
+
+    private fun requestStart(filter: TripDetailsPageFilter) {
+        _offer.value = null
         val request = LiveUpdateRequest.from(filter)
         if (!canPostNotifications()) {
             _pendingPermission.value = request
