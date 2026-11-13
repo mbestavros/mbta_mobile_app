@@ -8,7 +8,7 @@ error that starts with `fork:`.
 | Feature | Folder | Docs |
 |---|---|---|
 | Signed release build | `fork/android/release/` | [release/README.md](android/release/README.md) |
-| Live Update for followed trips | `fork/android/liveUpdate/` | "Live Update" in [release/README.md](android/release/README.md) |
+| Live Update for followed trips | `fork/android/liveUpdate/` | [liveUpdate/README.md](android/liveUpdate/README.md) |
 
 The release docs also cover local setup, one-time GitHub setup, and how to update from upstream.
 

@@ -318,7 +318,8 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    With the loader installed, this also compiles and tests the fork features. Without the loader,
    add `--init-script fork/android/fork.init.gradle`.
    If the compiler reports errors in `fork/`, upstream changed an API that a fork feature uses.
-   See the list of upstream APIs in "Live Update".
+   See the upstream API lists in each feature's README, such as
+   [liveUpdate/README.md](../liveUpdate/README.md).
 3. Build the fork release:
    ```
    ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
@@ -376,92 +377,15 @@ Make a new release. See "Release".
    A test-signed APK cannot update the release APK. Uninstall one before you install the other.
    An uninstall deletes the app's data.
 5. Open the app. Check that the map and predictions load.
-6. Open a station, select a direction and a train, and tap Follow. Tap "Track this trip". Check
+6. Open a station, select a direction and a trip, and tap Follow. Tap "Track this trip". Check
    that a Live Update shows.
-   See "Live Update" for the full test.
+   See [liveUpdate/README.md](../liveUpdate/README.md) for the full test.
 7. If the app crashes, read the crash log:
    ```
    adb logcat -d -b crash
    ```
    Firebase "API key not valid" errors are expected. They come from the placeholder values.
 8. Delete `/tmp/test.jks` and `/tmp/test.apk`.
-
-## Live Update
-When you track a train, the app shows an Android Live Update. On Android 16 and later, it
-shows on the lock screen and as a chip in the status bar. On earlier versions, it is an ongoing
-notification with a progress bar.
-
-- The Live Update shows the time until the train arrives at your stop. The notification header
-  shows the ETA. With a destination, it shows the arrival time and the ride time.
-- On a trip page, a "Track this trip" pill shows. Tap it to start the Live Update. This is the
-  only way to start one. Follow and a tap on a train on the map only open the trip page. If
-  another trip is tracked, the new trip replaces it.
-- While a trip is tracked, a pill shows on every screen of the app.
-  - On the trip page, it shows "Choose destination" or "To <stop>". Tap it to open a list of the
-    next stops. Select the stop where you get off. After you board, the Live Update shows the time
-    until you arrive.
-  - On other screens, it shows "Return to trip tracking". Tap it to open stop details with the
-    trip selected. Tap Follow to open the trip page.
-- "Track this trip" shows only after the trip data loads. Some trains show "not available" on
-  the trip page because the app can't load their trip. These trains can't be tracked. If no trip
-  data comes in 2 minutes, the Live Update ends with "No trip data for this train".
-- Tap the notification to open stop details with the trip selected.
-- Without a destination, the Live Update ends when the train leaves your stop. With a destination,
-  it ends when the train arrives there.
-- Use "Stop" in the notification, or "Stop tracking" in the list, to end it. If you swipe it
-  away, it ends.
-- The service posts the notification again only when its content changes. Each post also goes to
-  connected watches.
-
-The feature does not change upstream files:
-
-| Part | How it connects to the app |
-|---|---|
-| `liveUpdate/src/main/AndroidManifest.xml` | The loader adds it to each variant with the variant API |
-| `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
-| `TripPage` | Reads the map and trip details view models to find the open trip page |
-| `LiveUpdateOverlayInstaller` | Adds the pill above `MainActivity`'s content |
-| `LiveUpdateDeepLink` | Opens the trip with the app's stop deep link |
-| `LiveUpdateService` | A foreground service with its own websocket. The app closes its socket in the background. |
-
-The feature uses these upstream APIs. If upstream changes one, the fork does not compile:
-
-- `ITripDetailsViewModel.models` (`context`, `tripData.tripFilter`, `tripData.trip`) and
-  `IMapViewModel.models` (`LayerState.TripSelected.following`).
-- `makeNativeModule`, `ErrorBannerStateRepository`, `DebugRepository`, and the repository
-  interfaces for trips, trip predictions, vehicles and global data.
-- `TripDetailsStopList.fromPieces`, `TripDetailsStopList.splitForTarget` and `Stop.resolveParent`.
-- `DeepLinkState.Stop`, `DeepLinkState.from` and `GlobalResponse.getLineOrRoute`.
-- In `androidApp`: `appVariant`, `decodeMessage`, `Socket.wrapped()`, `MainActivity`
-  (`deepLinkStateFlow` and the `deep_link_path` intent extra), `MyApplicationTheme`, `Typography`,
-  `haloContainer`, `notificationPermissionState`, `formattedTime()`, `R.drawable.app_icon_monochrome`,
-  `R.drawable.fa_check`, `R.drawable.fa_xmark`, `R.drawable.fa_chevron_right`, the `R.color` values
-  `fill2`, `fill3`, `text`, `deemphasized`, `key`, `delete`, `delete_background` and `error`, and
-  `R.string.current_locale`.
-- The More page does not handle deep links. From the More page, "Return to trip tracking" goes
-  back to the map page first. If upstream adds more pages outside the map page, check this.
-
-Run the feature tests:
-```
-./gradlew :androidApp:testStagingDebugUnitTest --tests '*liveUpdate*'
-```
-
-Test on a phone:
-1. Follow a train. Check that no Live Update starts and that "Track this trip" shows. Tap it.
-   Check that a status bar chip and a lock screen card show.
-2. Check that the Live Update is promoted:
-   ```
-   adb shell dumpsys notification --noredact | grep -A20 live_updates | grep -i promot
-   ```
-3. On the trip page, tap "Choose destination" and select a destination. Check that the
-   notification changes and that its header shows the arrival time and the ride time.
-4. Go to Favorites, Nearby and More. Check that "Return to trip tracking" shows above the tabs.
-   Tap it. Check that stop details opens with the trip selected.
-5. Tap a different train on the map. Check that "Track this trip" shows. Tap it. Check that the
-   Live Update changes to the new train.
-6. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
-7. Tap the notification. Check that stop details opens with the trip selected.
-8. Tap "Stop". Check that the notification goes away.
 
 ## Known limitations
 - Push notifications do not work. MBTA's backend sends them through MBTA's Firebase project.
@@ -472,5 +396,4 @@ Test on a phone:
 - The Mapbox SDK can send its own telemetry. The fork does not change this.
 - The fork depends on MBTA's backend. If MBTA adds app attestation or rate limits, the fork can stop working.
 - CI does not run upstream's unit tests or emulator tests. Run the unit tests locally.
-- The Live Update does not show service alerts. The trip page still shows them.
-- The Live Update strings are in English only.
+- For Live Update limitations, see [liveUpdate/README.md](../liveUpdate/README.md).

@@ -6,7 +6,7 @@
 
     <string name="live_update_title">%1$s to %2$s</string>
     <string name="live_update_placeholder_title">Live update</string>
-    <string name="live_update_placeholder_text">Finding your train…</string>
+    <string name="live_update_placeholder_text">Finding your trip…</string>
 
     <string name="live_update_text_boarding">Boarding at %1$s</string>
     <string name="live_update_text_arriving">Arriving at %1$s</string>
@@ -33,7 +33,7 @@
     <string name="live_update_finished_trip_ended">Trip complete</string>
     <string name="live_update_finished_cancelled">Trip cancelled at %1$s</string>
     <string name="live_update_finished_already_passed">Already past %1$s</string>
-    <string name="live_update_finished_no_data">No trip data for this train</string>
+    <string name="live_update_finished_no_data">No data for this trip</string>
 
     <string name="live_update_action_stop">Stop</string>
 
@@ -45,7 +45,7 @@
     <string name="live_update_sheet_title">Choose destination</string>
     <string name="live_update_sheet_subtitle">%1$s to %2$s · from %3$s</string>
     <string name="live_update_sheet_no_destination">No destination</string>
-    <string name="live_update_sheet_no_destination_detail">End the live update when the train leaves %1$s</string>
+    <string name="live_update_sheet_no_destination_detail">End the live update when the vehicle leaves %1$s</string>
     <string name="live_update_sheet_stop">Stop tracking</string>
     <string name="live_update_sheet_enable">Turn on Live Updates in settings</string>
     <string name="live_update_sheet_loading">Loading stops…</string>
