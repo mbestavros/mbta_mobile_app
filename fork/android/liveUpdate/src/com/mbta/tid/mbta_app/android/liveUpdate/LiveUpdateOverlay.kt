@@ -72,9 +72,9 @@ import org.koin.compose.koinInject
 private val TAB_BAR_HEIGHT = 72.dp
 
 /**
- * The Live Update pill. It shows on every screen while a trip is tracked. On the trip page of the
- * tracked trip, it opens the destination sheet. On other screens, it opens the tracked trip again.
- * With no tracked trip, it offers to track a trip page that was opened from the map.
+ * The Live Update pill. On a trip page that is not tracked, it offers to track the trip. This is
+ * the only way to start a Live Update. On the trip page of the tracked trip, it opens the
+ * destination sheet. On other screens, it opens the tracked trip again.
  */
 @Composable
 fun LiveUpdateOverlay(
@@ -83,7 +83,6 @@ fun LiveUpdateOverlay(
     tripDetailsViewModel: ITripDetailsViewModel = koinInject(),
 ) {
     val session by controller.session.collectAsState()
-    val offer by controller.offer.collectAsState()
     val pendingPermission by controller.pendingPermission.collectAsState()
     val mapState by mapViewModel.models.collectAsState()
     val tripState by tripDetailsViewModel.models.collectAsState()
@@ -93,27 +92,25 @@ fun LiveUpdateOverlay(
     if (pendingPermission != null) PermissionRequest(controller)
 
     val current = session
-    if (current == null) {
-        val pageFilter =
-            FollowDetector.followedFilter(FollowDetector.isFollowingPage(mapState), tripState)
-        if (pageFilter != null && pageFilter.tripId == offer?.tripId) {
-            Pill(
-                colorResource(R.color.key),
-                colorResource(R.color.fill3),
-                bottomPadding = 16.dp,
-                onClick = controller::trackOffer,
-            ) {
-                Text(
-                    stringResource(R.string.live_update_overlay_track),
-                    style = Typography.calloutSemibold,
-                    maxLines = 1,
-                )
-            }
+    val pageFilter = TripPage.trackableFilter(TripPage.isOpen(mapState), tripState)
+    if (pageFilter != null && pageFilter.tripId != current?.request?.tripId) {
+        Pill(
+            colorResource(R.color.key),
+            colorResource(R.color.fill3),
+            bottomPadding = 16.dp,
+            onClick = { controller.track(pageFilter) },
+        ) {
+            Text(
+                stringResource(R.string.live_update_overlay_track),
+                style = Typography.calloutSemibold,
+                maxLines = 1,
+            )
         }
         return
     }
+    if (current == null) return
     val onTrackedTripPage =
-        FollowDetector.isFollowingPage(mapState) &&
+        TripPage.isOpen(mapState) &&
             tripState.tripData?.tripFilter?.tripId == current.request.tripId
     val onEntryScreen = mapState.layerState is MapViewModel.LayerState.Overview
 

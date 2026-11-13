@@ -23,7 +23,6 @@ object LiveUpdateOverlayInstaller : Application.ActivityLifecycleCallbacks {
 
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
         if (activity !is MainActivity) return
-        LiveUpdateBootstrap.startFollowDetection()
         activity.window.decorView.post { install(activity) }
     }
 

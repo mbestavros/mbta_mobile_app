@@ -25,40 +25,13 @@ class LiveUpdateController(private val context: Context) {
     private val _session = MutableStateFlow<LiveUpdateSession?>(null)
     val session: StateFlow<LiveUpdateSession?> = _session.asStateFlow()
 
-    /** A Follow that waits for the notification permission. */
+    /** A track request that waits for the notification permission. */
     private val _pendingPermission = MutableStateFlow<LiveUpdateRequest?>(null)
     val pendingPermission: StateFlow<LiveUpdateRequest?> = _pendingPermission.asStateFlow()
 
-    /**
-     * Trips that the user dismissed or that finished in this process. A Live Update must not be
-     * posted again after the user dismissed it.
-     */
-    private val doneTripIds = mutableSetOf<String>()
-
-    /** A trip page opened from the map. The overlay offers to track it. */
-    private val _offer = MutableStateFlow<TripDetailsPageFilter?>(null)
-    val offer: StateFlow<TripDetailsPageFilter?> = _offer.asStateFlow()
-
-    fun onFollow(filter: TripDetailsPageFilter) {
-        val tripId = filter.tripId
-        if (_session.value?.request?.tripId == tripId || tripId in doneTripIds) return
-        requestStart(filter)
-    }
-
-    fun onOpenedFromMap(filter: TripDetailsPageFilter) {
-        _offer.value = filter
-    }
-
-    /** The user tapped the offer. This also tracks a trip that the user stopped before. */
-    fun trackOffer() {
-        val filter = _offer.value ?: return
-        _offer.value = null
-        doneTripIds -= filter.tripId
-        if (_session.value?.request?.tripId != filter.tripId) requestStart(filter)
-    }
-
-    private fun requestStart(filter: TripDetailsPageFilter) {
-        _offer.value = null
+    /** The user tapped "Track this train". This replaces the current session, if there is one. */
+    fun track(filter: TripDetailsPageFilter) {
+        if (_session.value?.request?.tripId == filter.tripId) return
         val request = LiveUpdateRequest.from(filter)
         if (!canPostNotifications()) {
             _pendingPermission.value = request
@@ -81,16 +54,11 @@ class LiveUpdateController(private val context: Context) {
     }
 
     fun stop() {
-        _session.value?.request?.tripId?.let { doneTripIds += it }
         send(LiveUpdateService.ACTION_STOP, null)
     }
 
     internal fun publish(session: LiveUpdateSession) {
         _session.value = session
-    }
-
-    internal fun markDone(tripId: String) {
-        doneTripIds += tripId
     }
 
     internal fun clear() {
@@ -107,8 +75,8 @@ class LiveUpdateController(private val context: Context) {
         try {
             ContextCompat.startForegroundService(context, intent)
         } catch (e: IllegalStateException) {
-            // Starting a foreground service from the background is not allowed. Follow is a
-            // foreground action, so this is not expected.
+            // Starting a foreground service from the background is not allowed. The track tap is
+            // a foreground action, so this is not expected.
             Log.w("LiveUpdate", "Could not start the Live Update service", e)
             _session.value = null
         }
