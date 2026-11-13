@@ -12,7 +12,10 @@ import com.mbta.tid.mbta_app.repositories.ErrorKey
 import com.mbta.tid.mbta_app.repositories.IGlobalRepository
 import com.mbta.tid.mbta_app.repositories.ITripRepository
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +29,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Loads a trip the same way as the trip page (see getTripData and getTripDetailsStopList in
@@ -70,15 +74,19 @@ class TripTracker(
                     predictions,
                     tripSchedules,
                     currentVehicle ->
-                    TripDetailsStopList.fromPieces(
-                            trip,
-                            tripSchedules,
-                            predictions,
-                            currentVehicle,
-                            noAlerts,
-                            global,
-                        )
-                        ?.let { TrackerSnapshot(trip, route, it, currentVehicle, global) }
+                    // This runs on every prediction and vehicle update. Keep it off the main
+                    // thread.
+                    withContext(Dispatchers.Default) {
+                        TripDetailsStopList.fromPieces(
+                                trip,
+                                tripSchedules,
+                                predictions,
+                                currentVehicle,
+                                noAlerts,
+                                global,
+                            )
+                            ?.let { TrackerSnapshot(trip, route, it, currentVehicle, global) }
+                    }
                 }
                 .mapNotNull { it }
                 .onEach { snapshot ->
@@ -94,43 +102,56 @@ class TripTracker(
 
     private fun predictionUpdates(tripId: String): Flow<PredictionsStreamDataResponse> =
         callbackFlow {
+            lateinit var reconnector: Reconnector
             fun connect() {
                 connection.tripPredictions.connect(tripId, errorKey) { result ->
                     when (result) {
                         is ApiResult.Ok -> trySend(result.data)
-                        is ApiResult.Error -> {
-                            Log.w(TAG, "Trip predictions error: $result")
-                            launch {
-                                delay(RECONNECT_DELAY_MS)
-                                connect()
-                            }
-                        }
+                        is ApiResult.Error -> reconnector.onError("Trip predictions", result)
                     }
                 }
             }
+            reconnector = Reconnector(this, ::connect)
             connect()
             awaitClose { connection.tripPredictions.disconnect() }
         }
 
     private fun vehicleUpdates(vehicleId: String): Flow<Vehicle?> = callbackFlow {
+        lateinit var reconnector: Reconnector
         fun connect() {
             connection.vehicle.connect(vehicleId, errorKey) { result ->
                 when (result) {
                     is ApiResult.Ok -> trySend(result.data.vehicle)
-                    is ApiResult.Error -> {
-                        Log.w(TAG, "Vehicle error: $result")
-                        launch {
-                            delay(RECONNECT_DELAY_MS)
-                            connect()
-                        }
-                    }
+                    is ApiResult.Error -> reconnector.onError("Vehicle", result)
                 }
             }
         }
+        reconnector = Reconnector(this, ::connect)
         // Don't block the snapshots while the vehicle channel joins.
         trySend(null)
         connect()
         awaitClose { connection.vehicle.disconnect() }
+    }
+
+    /**
+     * Reconnects a channel after an error, with at most one reconnect pending. Each upstream
+     * connect tears down the channel first, so a burst of errors must not stack up reconnects.
+     * Errors come from socket callbacks, so this is synchronized.
+     */
+    private class Reconnector(private val scope: CoroutineScope, private val connect: () -> Unit) {
+        private var pending: Job? = null
+
+        @Synchronized
+        fun onError(channel: String, error: ApiResult.Error<*>) {
+            Log.w(TAG, "$channel error: $error")
+            // One bad message does not break the channel. Rejoining would not fix it.
+            if (error.message.startsWith(PARSE_ERROR_PREFIX)) return
+            if (pending?.isActive == true) return
+            pending = scope.launch {
+                delay(RECONNECT_DELAY_MS)
+                connect()
+            }
+        }
     }
 
     private suspend fun <T : Any> retrying(name: String, block: suspend () -> ApiResult<T>): T {
@@ -158,5 +179,12 @@ class TripTracker(
     private companion object {
         const val TAG = "LiveUpdate"
         const val RECONNECT_DELAY_MS = 10_000L
+
+        /**
+         * The start of upstream's parse error message (SocketError.FAILED_TO_PARSE in shared). It
+         * is internal to shared, so it is copied here. If it changes, parse errors reconnect too,
+         * at most once per [RECONNECT_DELAY_MS].
+         */
+        const val PARSE_ERROR_PREFIX = "channel failed to parse"
     }
 }

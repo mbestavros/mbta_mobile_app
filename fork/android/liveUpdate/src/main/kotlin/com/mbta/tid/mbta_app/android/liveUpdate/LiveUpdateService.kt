@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.core.context.GlobalContext
 
 /**
@@ -143,15 +144,20 @@ class LiveUpdateService : Service() {
                                 return@collect
                             }
                     anchor = currentAnchor
+                    // Compute off the main thread. Only posting and publishing stay on Main.
+                    val onTrip = wasOnTrip
+                    val boarded = boardingTime
                     val state =
-                        LiveUpdateStateCalculator.compute(
-                            snapshot,
-                            currentRequest,
-                            currentAnchor,
-                            wasOnTrip,
-                            EasternTimeInstant.now(),
-                            boardingTime,
-                        )
+                        withContext(Dispatchers.Default) {
+                            LiveUpdateStateCalculator.compute(
+                                snapshot,
+                                currentRequest,
+                                currentAnchor,
+                                onTrip,
+                                EasternTimeInstant.now(),
+                                boarded,
+                            )
+                        }
                     if (snapshot.vehicleOnTrip != null) wasOnTrip = true
                     boardingTime = state.boardingTime
                     val text = LiveUpdateTextFormatter.format(state, strings)
