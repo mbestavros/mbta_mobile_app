@@ -29,7 +29,7 @@ class LiveUpdateController(private val context: Context) {
     private val _pendingPermission = MutableStateFlow<LiveUpdateRequest?>(null)
     val pendingPermission: StateFlow<LiveUpdateRequest?> = _pendingPermission.asStateFlow()
 
-    /** The user tapped "Track this train". This replaces the current session, if there is one. */
+    /** The user tapped "Track this trip". This replaces the current session, if there is one. */
     fun track(filter: TripDetailsPageFilter) {
         if (_session.value?.request?.tripId == filter.tripId) return
         val request = LiveUpdateRequest.from(filter)

@@ -96,6 +96,7 @@ class LiveUpdateService : Service() {
             var anchor: TrackingAnchor? = null
             var wasOnTrip = false
             var boardingTime: EasternTimeInstant? = null
+            var lastPosted: LiveUpdateNotification.OngoingContent? = null
 
             launch {
                 while (true) {
@@ -160,15 +161,21 @@ class LiveUpdateService : Service() {
                     if (state.phase is LiveUpdatePhase.Finished) {
                         finish(text)
                     } else {
-                        post(
-                            LiveUpdateNotification.ONGOING_ID,
-                            LiveUpdateNotification.ongoing(
-                                this@LiveUpdateService,
-                                state,
-                                text,
-                                LiveUpdateDeepLink.path(currentRequest, snapshot.global),
-                            ),
-                        )
+                        val deepLinkPath = LiveUpdateDeepLink.path(currentRequest, snapshot.global)
+                        val content =
+                            LiveUpdateNotification.ongoingContent(state, text, deepLinkPath)
+                        if (content != lastPosted) {
+                            lastPosted = content
+                            post(
+                                LiveUpdateNotification.ONGOING_ID,
+                                LiveUpdateNotification.ongoing(
+                                    this@LiveUpdateService,
+                                    state,
+                                    text,
+                                    deepLinkPath,
+                                ),
+                            )
+                        }
                     }
                 }
         }

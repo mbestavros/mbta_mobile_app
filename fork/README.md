@@ -367,7 +367,7 @@ Make a new release. See "Release".
    A test-signed APK cannot update the release APK. Uninstall one before you install the other.
    An uninstall deletes the app's data.
 5. Open the app. Check that the map and predictions load.
-6. Open a station, select a direction and a train, and tap Follow. Tap "Track this train". Check
+6. Open a station, select a direction and a train, and tap Follow. Tap "Track this trip". Check
    that a Live Update shows.
    See "Live Update" for the full test.
 7. If the app crashes, read the crash log:
@@ -384,7 +384,7 @@ notification with a progress bar.
 
 - The Live Update shows the time until the train arrives at your stop. The notification header
   shows the ETA. With a destination, it shows the arrival time and the ride time.
-- On a trip page, a "Track this train" pill shows. Tap it to start the Live Update. This is the
+- On a trip page, a "Track this trip" pill shows. Tap it to start the Live Update. This is the
   only way to start one. Follow and a tap on a train on the map only open the trip page. If
   another trip is tracked, the new trip replaces it.
 - While a trip is tracked, a pill shows on every screen of the app.
@@ -393,15 +393,16 @@ notification with a progress bar.
     until you arrive.
   - On other screens, it shows "Return to trip tracking". Tap it to open stop details with the
     trip selected. Tap Follow to open the trip page.
-- "Track this train" shows only after the trip data loads. Some trains show "not available" on
+- "Track this trip" shows only after the trip data loads. Some trains show "not available" on
   the trip page because the app can't load their trip. These trains can't be tracked. If no trip
-  data
-  comes in 2 minutes, the Live Update ends with "No trip data for this train".
+  data comes in 2 minutes, the Live Update ends with "No trip data for this train".
 - Tap the notification to open stop details with the trip selected.
 - Without a destination, the Live Update ends when the train leaves your stop. With a destination,
   it ends when the train arrives there.
 - Use "Stop" in the notification, or "Stop tracking" in the list, to end it. If you swipe it
   away, it ends.
+- The service posts the notification again only when its content changes. Each post also goes to
+  connected watches.
 
 The feature does not change upstream files:
 
@@ -437,7 +438,7 @@ Run the feature tests:
 ```
 
 Test on a phone:
-1. Follow a train. Check that no Live Update starts and that "Track this train" shows. Tap it.
+1. Follow a train. Check that no Live Update starts and that "Track this trip" shows. Tap it.
    Check that a status bar chip and a lock screen card show.
 2. Check that the Live Update is promoted:
    ```
@@ -447,7 +448,7 @@ Test on a phone:
    notification changes and that its header shows the arrival time and the ride time.
 4. Go to Favorites, Nearby and More. Check that "Return to trip tracking" shows above the tabs.
    Tap it. Check that stop details opens with the trip selected.
-5. Tap a different train on the map. Check that "Track this train" shows. Tap it. Check that the
+5. Tap a different train on the map. Check that "Track this trip" shows. Tap it. Check that the
    Live Update changes to the new train.
 6. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
 7. Tap the notification. Check that stop details opens with the trip selected.

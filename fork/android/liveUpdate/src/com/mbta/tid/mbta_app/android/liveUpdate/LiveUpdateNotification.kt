@@ -50,6 +50,36 @@ object LiveUpdateNotification {
             .setStyle(NotificationCompat.ProgressStyle().setProgressIndeterminate(true))
             .build()
 
+    /**
+     * What the ongoing notification shows. Each post goes to the lock screen and to connected
+     * watches, so post only when this changes. The exact clock time is not part of it: the text
+     * shows the time to the minute, and the "when" time is close enough until the text changes.
+     */
+    data class OngoingContent(
+        val text: LiveUpdateText,
+        val progress: Int,
+        val progressMax: Int,
+        val boardingPosition: Int,
+        val destinationPosition: Int?,
+        val routeColor: String,
+        val deepLinkPath: String?,
+    )
+
+    fun ongoingContent(
+        state: LiveUpdateState,
+        text: LiveUpdateText,
+        deepLinkPath: String?,
+    ): OngoingContent =
+        OngoingContent(
+            text,
+            state.progress,
+            state.progressMax,
+            state.boardingPosition,
+            state.destinationPosition,
+            state.routeColor,
+            deepLinkPath,
+        )
+
     /** @param deepLinkPath opens the tracked trip when the user taps the notification. */
     fun ongoing(
         context: Context,
