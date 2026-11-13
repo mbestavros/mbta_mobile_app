@@ -3,6 +3,7 @@ package com.mbta.tid.mbta_app.android.liveUpdate
 import com.mbta.tid.mbta_app.model.Prediction
 import com.mbta.tid.mbta_app.model.Vehicle.CurrentStatus.InTransitTo
 import com.mbta.tid.mbta_app.model.Vehicle.CurrentStatus.StoppedAt
+import com.mbta.tid.mbta_app.utils.EasternTimeInstant
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -22,7 +23,16 @@ class LiveUpdateStateCalculatorTest {
         snapshot: TrackerSnapshot,
         request: LiveUpdateRequest = f.request,
         wasOnTrip: Boolean = true,
-    ) = LiveUpdateStateCalculator.compute(snapshot, request, anchor, wasOnTrip, f.now)
+        rememberedBoardingTime: EasternTimeInstant? = null,
+    ) =
+        LiveUpdateStateCalculator.compute(
+            snapshot,
+            request,
+            anchor,
+            wasOnTrip,
+            f.now,
+            rememberedBoardingTime,
+        )
 
     @Test
     fun `anchor uses the boarding stop and the remaining sequences`() {
@@ -48,6 +58,45 @@ class LiveUpdateStateCalculatorTest {
         assertEquals(2, state.boardingPosition)
         assertEquals(2, state.progressMax)
         assertNull(state.destinationPosition)
+    }
+
+    @Test
+    fun `without a destination, the ETA is the arrival at the boarding stop`() {
+        val state = compute(f.snapshot(f.vehicle(InTransitTo, 20), mapOf(30 to 4.minutes)))
+
+        assertEquals(f.now + 4.minutes, state.eta)
+        assertEquals(f.now + 4.minutes, state.boardingTime)
+        assertNull(state.destinationArrival)
+        assertNull(state.rideDuration)
+    }
+
+    @Test
+    fun `with a destination, the ETA is the destination arrival and the ride time is known`() {
+        val state =
+            compute(
+                f.snapshot(f.vehicle(InTransitTo, 20), mapOf(30 to 4.minutes, 50 to 12.minutes)),
+                f.requestWithDestination,
+            )
+
+        assertEquals(f.now + 12.minutes, state.eta)
+        assertEquals(f.now + 12.minutes, state.destinationArrival)
+        assertEquals(f.now + 4.minutes, state.boardingTime)
+        assertEquals(8.minutes, state.rideDuration)
+    }
+
+    @Test
+    fun `while riding, the remembered boarding time gives the ride time`() {
+        val state =
+            compute(
+                f.snapshot(f.vehicle(InTransitTo, 40), mapOf(50 to 3.minutes)),
+                f.requestWithDestination,
+                rememberedBoardingTime = f.now - 2.minutes,
+            )
+
+        assertEquals(LiveUpdatePhase.Riding, state.phase)
+        assertEquals(f.now - 2.minutes, state.boardingTime)
+        assertEquals(f.now + 3.minutes, state.eta)
+        assertEquals(5.minutes, state.rideDuration)
     }
 
     @Test

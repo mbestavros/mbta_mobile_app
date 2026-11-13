@@ -19,6 +19,11 @@
         <item quantity="other">%1$s · %2$d stops away</item>
     </plurals>
 
+    <string name="live_update_sub_eta">ETA %1$s</string>
+    <string name="live_update_sub_arrive">Arrive %1$s</string>
+    <string name="live_update_ride_minutes">%1$d min ride</string>
+    <string name="live_update_ride_hours">%1$d hr %2$d min ride</string>
+
     <string name="live_update_chip_boarding">Board</string>
     <string name="live_update_chip_arriving">Now</string>
     <string name="live_update_chip_minutes">%1$d min</string>
@@ -31,13 +36,15 @@
 
     <string name="live_update_action_stop">Stop</string>
 
-    <string name="live_update_overlay_label">Live update</string>
     <string name="live_update_overlay_destination">To %1$s</string>
     <string name="live_update_overlay_choose_destination">Choose destination</string>
-    <string name="live_update_sheet_title">Where do you get off?</string>
+    <string name="live_update_overlay_return">Return to trip tracking</string>
+    <string name="live_update_overlay_status">%1$s · %2$s</string>
+    <string name="live_update_sheet_title">Choose destination</string>
+    <string name="live_update_sheet_subtitle">%1$s to %2$s · from %3$s</string>
     <string name="live_update_sheet_no_destination">No destination</string>
     <string name="live_update_sheet_no_destination_detail">End the live update when the train leaves %1$s</string>
-    <string name="live_update_sheet_stop">Stop live update</string>
+    <string name="live_update_sheet_stop">Stop tracking</string>
     <string name="live_update_sheet_enable">Turn on Live Updates in settings</string>
     <string name="live_update_sheet_loading">Loading stops…</string>
 </resources>

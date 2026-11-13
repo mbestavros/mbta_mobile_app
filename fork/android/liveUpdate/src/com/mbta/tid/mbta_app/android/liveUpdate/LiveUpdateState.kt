@@ -6,6 +6,7 @@ import com.mbta.tid.mbta_app.model.TripDetailsStopList
 import com.mbta.tid.mbta_app.model.Vehicle
 import com.mbta.tid.mbta_app.model.response.GlobalResponse
 import com.mbta.tid.mbta_app.utils.EasternTimeInstant
+import kotlin.time.Duration
 
 /** The latest data for a tracked trip, as the trip page would show it. */
 data class TrackerSnapshot(
@@ -70,6 +71,14 @@ data class LiveUpdateState(
     val targetStopName: String,
     val label: LiveUpdateLabel,
     val targetTime: EasternTimeInstant?,
+    /** When the train leaves the boarding stop. */
+    val boardingTime: EasternTimeInstant?,
+    /** When the train arrives at the destination, or null without a destination. */
+    val destinationArrival: EasternTimeInstant?,
+    /** The destination arrival, or the arrival at the boarding stop without a destination. */
+    val eta: EasternTimeInstant?,
+    /** Time on the train from the boarding stop to the destination. */
+    val rideDuration: Duration?,
     /** Stops between the vehicle and the target, or null if the vehicle position is unknown. */
     val stopsAway: Int?,
     val progress: Int,
