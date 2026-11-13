@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -58,8 +60,6 @@ import com.mbta.tid.mbta_app.android.util.Typography
 import com.mbta.tid.mbta_app.android.util.formattedTime
 import com.mbta.tid.mbta_app.android.util.modifiers.haloContainer
 import com.mbta.tid.mbta_app.android.util.notificationPermissionState
-import com.mbta.tid.mbta_app.model.TripDetailsStopList
-import com.mbta.tid.mbta_app.routes.DeepLinkState
 import com.mbta.tid.mbta_app.viewModel.IMapViewModel
 import com.mbta.tid.mbta_app.viewModel.ITripDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.MapViewModel
@@ -126,16 +126,15 @@ fun LiveUpdateOverlay(
             sheetOpen = true
         } else {
             val activity = context.findMainActivity() ?: return@LiveUpdatePill
-            val target = LiveUpdateDeepLink.state(current.request, current.snapshot?.global)
-            returnToTrip(activity, target, scope, canLeavePage = onEntryScreen)
+            returnToTrip(activity, current, scope, mayBeOnMorePage = onEntryScreen)
         }
     }
     if (sheetOpen) {
         DestinationSheet(
             current,
             onDismiss = { sheetOpen = false },
-            onChoose = { entry ->
-                controller.setDestination(entry?.stop?.id, entry?.stopSequence)
+            onChoose = { choice ->
+                controller.setDestination(choice?.stopId, choice?.stopSequence)
                 sheetOpen = false
             },
             onStop = {
@@ -146,25 +145,37 @@ fun LiveUpdateOverlay(
     }
 }
 
+/** How long the map and sheet page may take to handle a deep link before we assume it can't. */
+private const val DEEP_LINK_HANDLED_TIMEOUT_MS = 1_500L
+
 /**
  * Opens the tracked trip with the stop deep link. The map and sheet page handles the link and
- * clears it. The More page does not handle deep links, so if the link is still there after a short
- * time, go back to the map and sheet page, which then handles it.
+ * clears it on its next frame.
+ *
+ * The More page does not handle deep links. The overlay can't see upstream's navigation, so it
+ * can't tell the More page from the map entry screen. If the link is still pending after a timeout,
+ * restart MainActivity with the link as a new task. That drops upstream's saved navigation state,
+ * so the new activity starts on the map and sheet page and opens the link there. If the guess is
+ * wrong, the cost is a UI restart, never closing the app.
  */
 private fun returnToTrip(
     activity: MainActivity,
-    target: DeepLinkState.Stop,
+    session: LiveUpdateSession,
     scope: CoroutineScope,
-    canLeavePage: Boolean,
+    mayBeOnMorePage: Boolean,
 ) {
+    val global = session.snapshot?.global
+    val target = LiveUpdateDeepLink.state(session.request, global)
     activity.deepLinkStateFlow.value = target
-    if (!canLeavePage) return
+    if (!mayBeOnMorePage) return
     scope.launch {
-        repeat(3) {
-            delay(750)
-            if (activity.deepLinkStateFlow.value != target) return@launch
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
+        delay(DEEP_LINK_HANDLED_TIMEOUT_MS)
+        if (activity.deepLinkStateFlow.value != target || activity.isFinishing) return@launch
+        activity.clearDeepLink()
+        activity.startActivity(
+            LiveUpdateDeepLink.intent(activity, LiveUpdateDeepLink.path(session.request, global))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        )
     }
 }
 
@@ -239,7 +250,7 @@ private fun LiveUpdatePill(
 }
 
 @Composable
-private fun Pill(
+internal fun Pill(
     background: Color,
     foreground: Color,
     bottomPadding: Dp,
@@ -265,21 +276,39 @@ private fun Pill(
     }
 }
 
+/** A stop after the boarding stop that the user can pick as the destination. */
+internal data class DestinationChoice(
+    val stopId: String,
+    val stopSequence: Int,
+    val name: String,
+    val time: String?,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DestinationSheet(
     session: LiveUpdateSession,
     onDismiss: () -> Unit,
-    onChoose: (TripDetailsStopList.Entry?) -> Unit,
+    onChoose: (DestinationChoice?) -> Unit,
     onStop: () -> Unit,
 ) {
     val context = LocalContext.current
     val anchor = session.anchor
     val snapshot = session.snapshot
-    val state = session.state
     val choices =
         if (anchor != null && snapshot != null) {
-            snapshot.stopList.stops.filter { it.stopSequence > anchor.boardingStopSequence }
+            snapshot.stopList.stops
+                .filter { it.stopSequence > anchor.boardingStopSequence }
+                .map { entry ->
+                    DestinationChoice(
+                        stopId = entry.stop.id,
+                        stopSequence = entry.stopSequence,
+                        name = entry.stop.resolveParent(snapshot.global).name,
+                        time =
+                            (entry.prediction?.arrivalTime ?: entry.schedule?.arrivalTime)
+                                ?.formattedTime(),
+                    )
+                }
         } else {
             null
         }
@@ -290,100 +319,124 @@ private fun DestinationSheet(
         containerColor = colorResource(R.color.fill2),
         contentColor = colorResource(R.color.text),
     ) {
-        Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            SheetHeader(state, context)
+        DestinationSheetContent(
+            state = session.state,
+            canPostPromoted = canPostPromoted(context),
+            boardingStopName = anchor?.boardingStopName,
+            choices = choices,
+            selectedStopSequence = session.request.destinationStopSequence,
+            onChoose = onChoose,
+            onStop = onStop,
+            onOpenSettings = { openPromotedSettings(context) },
+        )
+    }
+}
 
-            if (!canPostPromoted(context)) {
-                Row(
-                    Modifier.fillMaxWidth()
-                        .haloContainer(1.dp, backgroundColor = colorResource(R.color.fill3))
-                        .clickable(role = Role.Button) { openPromotedSettings(context) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.live_update_sheet_enable),
-                        style = Typography.body,
-                        color = colorResource(R.color.error),
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(
-                        painterResource(R.drawable.fa_chevron_right),
-                        contentDescription = null,
-                        modifier = Modifier.size(12.dp),
-                        tint = colorResource(R.color.deemphasized),
-                    )
-                }
-            }
+/**
+ * The destination sheet's content. [choices] is null while the stops load. [selectedStopSequence]
+ * is null when there is no destination.
+ */
+@Composable
+internal fun DestinationSheetContent(
+    state: LiveUpdateState?,
+    canPostPromoted: Boolean,
+    boardingStopName: String?,
+    choices: List<DestinationChoice>?,
+    selectedStopSequence: Int?,
+    onChoose: (DestinationChoice?) -> Unit,
+    onStop: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        SheetHeader(state, context)
 
-            LazyColumn(
-                Modifier.weight(1f, fill = false)
-                    .fillMaxWidth()
-                    .haloContainer(1.dp, backgroundColor = colorResource(R.color.fill3)),
+        if (!canPostPromoted) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .haloContainer(1.dp, backgroundColor = colorResource(R.color.fill3))
+                    .clickable(role = Role.Button, onClick = onOpenSettings)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                item(key = "none") {
-                    StopRow(
-                        stringResource(R.string.live_update_sheet_no_destination),
-                        detail =
-                            anchor?.let {
-                                stringResource(
-                                    R.string.live_update_sheet_no_destination_detail,
-                                    it.boardingStopName,
-                                )
-                            },
-                        selected = !session.request.hasDestination,
-                        onClick = { onChoose(null) },
-                    )
-                }
-                if (choices == null) {
-                    item(key = "loading") {
-                        HorizontalDivider()
-                        StopRow(stringResource(R.string.live_update_sheet_loading), onClick = null)
-                    }
-                } else {
-                    itemsIndexed(choices, key = { _, entry -> entry.stopSequence }) { _, entry ->
-                        HorizontalDivider()
-                        val name = snapshot?.global?.let { entry.stop.resolveParent(it).name }
-                        val time =
-                            (entry.prediction?.arrivalTime ?: entry.schedule?.arrivalTime)
-                                ?.formattedTime()
-                        StopRow(
-                            name ?: entry.stop.name,
-                            time = time,
-                            selected =
-                                session.request.destinationStopSequence == entry.stopSequence,
-                            onClick = { onChoose(entry) },
-                        )
-                    }
-                }
-            }
-
-            Button(
-                onClick = onStop,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 45.dp),
-                shape = RoundedCornerShape(8.dp),
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor = colorResource(R.color.delete),
-                        contentColor = colorResource(R.color.delete_background),
-                    ),
-            ) {
-                Icon(
-                    painterResource(R.drawable.fa_xmark),
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.size(8.dp))
                 Text(
-                    stringResource(R.string.live_update_sheet_stop),
-                    style = Typography.bodySemibold,
+                    stringResource(R.string.live_update_sheet_enable),
+                    style = Typography.body,
+                    color = colorResource(R.color.error),
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    painterResource(R.drawable.fa_chevron_right),
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = colorResource(R.color.deemphasized),
                 )
             }
-            Spacer(Modifier.size(8.dp))
         }
+
+        LazyColumn(
+            Modifier.weight(1f, fill = false)
+                .fillMaxWidth()
+                .haloContainer(1.dp, backgroundColor = colorResource(R.color.fill3))
+                .selectableGroup(),
+        ) {
+            item(key = "none") {
+                StopRow(
+                    stringResource(R.string.live_update_sheet_no_destination),
+                    detail =
+                        boardingStopName?.let {
+                            stringResource(
+                                R.string.live_update_sheet_no_destination_detail,
+                                it,
+                            )
+                        },
+                    selected = selectedStopSequence == null,
+                    onClick = { onChoose(null) },
+                )
+            }
+            if (choices == null) {
+                item(key = "loading") {
+                    HorizontalDivider()
+                    LoadingRow(stringResource(R.string.live_update_sheet_loading))
+                }
+            } else {
+                items(choices, key = { it.stopSequence }) { choice ->
+                    HorizontalDivider()
+                    StopRow(
+                        choice.name,
+                        time = choice.time,
+                        selected = selectedStopSequence == choice.stopSequence,
+                        onClick = { onChoose(choice) },
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = onStop,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 45.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = colorResource(R.color.delete),
+                    contentColor = colorResource(R.color.delete_background),
+                ),
+        ) {
+            Icon(
+                painterResource(R.drawable.fa_xmark),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.size(8.dp))
+            Text(
+                stringResource(R.string.live_update_sheet_stop),
+                style = Typography.bodySemibold,
+            )
+        }
+        Spacer(Modifier.size(8.dp))
     }
 }
 
@@ -409,21 +462,30 @@ private fun SheetHeader(state: LiveUpdateState?, context: Context) {
     }
 }
 
+/** A row that is not a choice. It is plain text to a screen reader. */
+@Composable
+private fun LoadingRow(text: String) {
+    Text(
+        text,
+        style = Typography.body,
+        color = colorResource(R.color.deemphasized),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+    )
+}
+
+/** One choice of the destination list. A screen reader reads it as a radio button. */
 @Composable
 private fun StopRow(
     text: String,
     detail: String? = null,
     time: String? = null,
-    selected: Boolean = false,
-    onClick: (() -> Unit)?,
+    selected: Boolean,
+    onClick: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth()
             .heightIn(min = 48.dp)
-            .then(
-                if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick)
-                else Modifier,
-            )
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,

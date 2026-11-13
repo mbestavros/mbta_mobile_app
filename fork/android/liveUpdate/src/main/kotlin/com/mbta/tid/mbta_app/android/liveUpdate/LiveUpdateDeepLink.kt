@@ -1,5 +1,9 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import com.mbta.tid.mbta_app.android.MainActivity
 import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.response.GlobalResponse
 import com.mbta.tid.mbta_app.routes.DeepLinkState
@@ -23,8 +27,15 @@ object LiveUpdateDeepLink {
             tripId = request.tripId,
         )
 
-    /** A path for the deep_link_path extra that MainActivity reads. */
+    /** The same link as [state], as a URL. */
     fun path(request: LiveUpdateRequest, global: GlobalResponse?): String =
         "$BASE_URL/s/${request.stopId}/r/${routeOrLineId(request.routeId, global)}" +
             "/d/${request.directionId}/t/${request.tripId}"
+
+    /**
+     * Opens [path] in this app's MainActivity. MainActivity.handleIntent reads the data of an
+     * ACTION_VIEW intent. The explicit component keeps the official app from claiming the link.
+     */
+    fun intent(context: Context, path: String): Intent =
+        Intent(Intent.ACTION_VIEW, Uri.parse(path)).setClass(context, MainActivity::class.java)
 }
