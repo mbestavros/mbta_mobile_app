@@ -41,8 +41,6 @@ jobs:
         with:
           distribution: temurin
           java-version-file: .tool-versions
-      - name: Install rsvg-convert
-        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
       - name: Check fork code
         run: |
           ./gradlew --no-daemon --no-build-cache \
