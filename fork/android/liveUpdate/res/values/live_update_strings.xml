@@ -2,7 +2,7 @@
 <!-- Fork-only strings. English only: other locales fall back to these. -->
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
     <string name="live_update_channel_name">Live Updates</string>
-    <string name="live_update_channel_description">Live progress of a trip that you follow</string>
+    <string name="live_update_channel_description">Live progress of a trip that you track</string>
 
     <string name="live_update_title">%1$s to %2$s</string>
     <string name="live_update_placeholder_title">Live update</string>

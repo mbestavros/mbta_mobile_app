@@ -65,11 +65,8 @@ class LiveUpdateService : Service() {
                     request.value = updated
                 }
             }
-            ACTION_STOP -> finish(null)
-            ACTION_DISMISSED -> {
-                request.value?.tripId?.let { controller?.markDone(it) }
-                finish(null)
-            }
+            ACTION_STOP,
+            ACTION_DISMISSED -> finish(null)
             else -> if (request.value == null) stopSelf(startId)
         }
         return START_NOT_STICKY
@@ -161,7 +158,6 @@ class LiveUpdateService : Service() {
                         LiveUpdateSession(currentRequest, snapshot, currentAnchor, state),
                     )
                     if (state.phase is LiveUpdatePhase.Finished) {
-                        controller?.markDone(currentRequest.tripId)
                         finish(text)
                     } else {
                         post(
@@ -193,7 +189,6 @@ class LiveUpdateService : Service() {
                 R.string.live_update_finished_already_passed,
                 stopName,
             )
-        controller?.markDone(request.tripId)
         finish(LiveUpdateText(title, text, chip = null))
     }
 
