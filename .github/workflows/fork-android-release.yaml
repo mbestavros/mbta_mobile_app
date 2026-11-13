@@ -1,8 +1,10 @@
 name: Fork Android Release
 
 # Fork-only workflow. Builds the prod Android app with fork/android/fork.init.gradle,
-# signs it in a job that runs no repository code, and publishes it to a GitHub Release.
-# A manual run builds the unsigned APK only.
+# checks the APK with fork/android/release/check-apk.sh, signs it in a job that runs no
+# repository code, and publishes it to a GitHub Release.
+# Only a pushed fork-android-v* tag signs and releases. A manual run builds the unsigned APK only.
+# Docs: fork/android/release/README.md
 
 on:
   push:
@@ -23,9 +25,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      # TODO: Remove once https://github.com/actions/runner-images/issues/15018 is resolved
-      - name: Upgrade CA certificates
-        run: sudo apt-get update && sudo apt-get install -y --only-upgrade ca-certificates
+      # TODO: Remove the ca-certificates upgrade once
+      # https://github.com/actions/runner-images/issues/15018 is resolved
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --only-upgrade ca-certificates
+          sudo apt-get install -y librsvg2-bin
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -43,12 +49,35 @@ jobs:
             --init-script fork/android/fork.init.gradle \
             :spotlessForkKotlinCheck \
             :androidApp:testProdDebugUnitTest --tests '*liveUpdate*'
+
+      # Tag fork-android-vX.Y.Z-N gives version code X*1000000 + Y*10000 + Z*100 + N, so codes
+      # only go up as versions go up. A manual run is unsigned only and uses the run number.
+      - name: Set version code
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = push ]; then
+            if [[ ! "${GITHUB_REF_NAME}" =~ ^fork-android-v([0-9]+)\.([0-9]{1,2})\.([0-9]{1,2})-([0-9]{1,2})$ ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} must be fork-android-vX.Y.Z-N with Y, Z and N under 100"
+              exit 1
+            fi
+            code=$(( 10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[2]} * 10000 \
+              + 10#${BASH_REMATCH[3]} * 100 + 10#${BASH_REMATCH[4]} ))
+            echo "VERSION_NAME=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "${GITHUB_ENV}"
+          else
+            code="${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION_CODE=${code}" >> "${GITHUB_ENV}"
       - name: Build prod release
         run: |
           ./gradlew --no-daemon --no-build-cache \
             --init-script fork/android/fork.init.gradle \
             :androidApp:assembleProdRelease \
-            -Pandroid.injected.version.code="${GITHUB_RUN_NUMBER}"
+            -Pandroid.injected.version.code="${VERSION_CODE}"
+      - name: Check APK
+        run: |
+          fork/android/release/check-apk.sh \
+            androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk \
+            ${VERSION_NAME:+"${VERSION_NAME}"}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-apk
