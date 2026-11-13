@@ -33,12 +33,14 @@
     <string name="live_update_finished_trip_ended">Trip complete</string>
     <string name="live_update_finished_cancelled">Trip cancelled at %1$s</string>
     <string name="live_update_finished_already_passed">Already past %1$s</string>
+    <string name="live_update_finished_no_data">No trip data for this train</string>
 
     <string name="live_update_action_stop">Stop</string>
 
     <string name="live_update_overlay_destination">To %1$s</string>
     <string name="live_update_overlay_choose_destination">Choose destination</string>
     <string name="live_update_overlay_return">Return to trip tracking</string>
+    <string name="live_update_overlay_track">Track this train</string>
     <string name="live_update_overlay_status">%1$s · %2$s</string>
     <string name="live_update_sheet_title">Choose destination</string>
     <string name="live_update_sheet_subtitle">%1$s to %2$s · from %3$s</string>

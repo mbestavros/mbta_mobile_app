@@ -74,6 +74,7 @@ private val TAB_BAR_HEIGHT = 72.dp
 /**
  * The Live Update pill. It shows on every screen while a trip is tracked. On the trip page of the
  * tracked trip, it opens the destination sheet. On other screens, it opens the tracked trip again.
+ * With no tracked trip, it offers to track a trip page that was opened from the map.
  */
 @Composable
 fun LiveUpdateOverlay(
@@ -82,6 +83,7 @@ fun LiveUpdateOverlay(
     tripDetailsViewModel: ITripDetailsViewModel = koinInject(),
 ) {
     val session by controller.session.collectAsState()
+    val offer by controller.offer.collectAsState()
     val pendingPermission by controller.pendingPermission.collectAsState()
     val mapState by mapViewModel.models.collectAsState()
     val tripState by tripDetailsViewModel.models.collectAsState()
@@ -90,7 +92,26 @@ fun LiveUpdateOverlay(
 
     if (pendingPermission != null) PermissionRequest(controller)
 
-    val current = session ?: return
+    val current = session
+    if (current == null) {
+        val pageFilter =
+            FollowDetector.followedFilter(FollowDetector.isFollowingPage(mapState), tripState)
+        if (pageFilter != null && pageFilter.tripId == offer?.tripId) {
+            Pill(
+                colorResource(R.color.key),
+                colorResource(R.color.fill3),
+                bottomPadding = 16.dp,
+                onClick = controller::trackOffer,
+            ) {
+                Text(
+                    stringResource(R.string.live_update_overlay_track),
+                    style = Typography.calloutSemibold,
+                    maxLines = 1,
+                )
+            }
+        }
+        return
+    }
     val onTrackedTripPage =
         FollowDetector.isFollowingPage(mapState) &&
             tripState.tripData?.tripFilter?.tripId == current.request.tripId
@@ -186,6 +207,48 @@ private fun LiveUpdatePill(
     val background = state?.routeColor?.let(::composeColor) ?: colorResource(R.color.key)
     val foreground = state?.routeTextColor?.let(::composeColor) ?: colorResource(R.color.fill3)
     val destination = state?.destinationStopName
+    Pill(background, foreground, bottomPadding, onClick) {
+        if (onTrackedTripPage) {
+            Text(
+                if (destination != null) {
+                    stringResource(R.string.live_update_overlay_destination, destination)
+                } else {
+                    stringResource(R.string.live_update_overlay_choose_destination)
+                },
+                style = Typography.calloutSemibold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Text(
+                stringResource(R.string.live_update_overlay_return),
+                style = Typography.calloutSemibold,
+                maxLines = 1,
+            )
+            if (state != null) {
+                Text(
+                    stringResource(
+                        R.string.live_update_overlay_status,
+                        state.routeName,
+                        LiveUpdateTextFormatter.statusText(state, ContextStringLookup(context)),
+                    ),
+                    style = Typography.footnote,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Pill(
+    background: Color,
+    foreground: Color,
+    bottomPadding: Dp,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
     Surface(
         modifier =
             Modifier.navigationBarsPadding()
@@ -200,36 +263,7 @@ private fun LiveUpdatePill(
             Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (onTrackedTripPage) {
-                Text(
-                    if (destination != null) {
-                        stringResource(R.string.live_update_overlay_destination, destination)
-                    } else {
-                        stringResource(R.string.live_update_overlay_choose_destination)
-                    },
-                    style = Typography.calloutSemibold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                Text(
-                    stringResource(R.string.live_update_overlay_return),
-                    style = Typography.calloutSemibold,
-                    maxLines = 1,
-                )
-                if (state != null) {
-                    Text(
-                        stringResource(
-                            R.string.live_update_overlay_status,
-                            state.routeName,
-                            LiveUpdateTextFormatter.statusText(state, ContextStringLookup(context)),
-                        ),
-                        style = Typography.footnote,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            content()
         }
     }
 }

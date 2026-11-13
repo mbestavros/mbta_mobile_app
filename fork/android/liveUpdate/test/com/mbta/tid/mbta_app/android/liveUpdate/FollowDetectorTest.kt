@@ -1,5 +1,6 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
+import com.mbta.tid.mbta_app.model.ObjectCollectionBuilder
 import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import com.mbta.tid.mbta_app.model.stopDetailsPage.TripData
@@ -23,9 +24,19 @@ class FollowDetectorTest {
     private fun filter(tripId: String) =
         TripDetailsPageFilter(tripId, "v1", Route.Id("Red"), 0, "place-pktrm", 30)
 
-    private fun state(filter: TripDetailsPageFilter?, context: Context?) =
+    private val objects = ObjectCollectionBuilder("FollowDetectorTest")
+
+    private fun state(
+        filter: TripDetailsPageFilter?,
+        context: Context?,
+        tripLoaded: Boolean = true,
+    ) =
         TripDetailsViewModel.State(
-            tripData = filter?.let { TripData(it, null, null, null, null) },
+            tripData =
+                filter?.let {
+                    val trip = if (tripLoaded) objects.trip { id = it.tripId } else null
+                    TripData(it, trip, null, null, null)
+                },
             context = context,
         )
 
@@ -38,6 +49,16 @@ class FollowDetectorTest {
         assertNull(FollowDetector.followedFilter(false, state(filterA, Context.TripDetails)))
         assertNull(FollowDetector.followedFilter(true, state(filterA, Context.StopDetails)))
         assertNull(FollowDetector.followedFilter(true, state(null, Context.TripDetails)))
+    }
+
+    @Test
+    fun `filter is not returned for a vehicle with no trip data`() {
+        assertNull(
+            FollowDetector.followedFilter(
+                true,
+                state(filterA, Context.TripDetails, tripLoaded = false),
+            ),
+        )
     }
 
     @Test
