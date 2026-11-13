@@ -23,6 +23,9 @@ object LiveUpdateNotification {
     const val FINAL_ID = 4_002
     private const val FINAL_TIMEOUT_MS = 60_000L
 
+    /** The extra name that MainActivity.handleIntent reads (MainActivity.deepLinkPathKey). */
+    private const val DEEP_LINK_PATH_EXTRA = "deep_link_path"
+
     fun ensureChannel(context: Context) {
         val channel =
             NotificationChannel(
@@ -47,14 +50,22 @@ object LiveUpdateNotification {
             .setStyle(NotificationCompat.ProgressStyle().setProgressIndeterminate(true))
             .build()
 
-    fun ongoing(context: Context, state: LiveUpdateState, text: LiveUpdateText): Notification {
+    /** @param deepLinkPath opens the tracked trip when the user taps the notification. */
+    fun ongoing(
+        context: Context,
+        state: LiveUpdateState,
+        text: LiveUpdateText,
+        deepLinkPath: String?,
+    ): Notification {
         val color = parseColor(state.routeColor)
         val builder =
             baseBuilder(context)
                 .setContentTitle(text.title)
                 .setContentText(text.text)
+                .setSubText(text.subText)
                 .setShortCriticalText(text.chip)
                 .setStyle(progressStyle(state, color))
+        if (deepLinkPath != null) builder.setContentIntent(openAppIntent(context, deepLinkPath))
 
         val clockTime = (state.label as? LiveUpdateLabel.ClockTime)?.time
         if (clockTime != null) {
@@ -121,12 +132,15 @@ object LiveUpdateNotification {
         return style
     }
 
-    private fun openAppIntent(context: Context): PendingIntent? =
+    private fun openAppIntent(context: Context, deepLinkPath: String? = null): PendingIntent? =
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { intent ->
+            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            // MainActivity reads this extra and opens stop details with the trip selected.
+            deepLinkPath?.let { intent.putExtra(DEEP_LINK_PATH_EXTRA, it) }
             PendingIntent.getActivity(
                 context,
                 0,
-                intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         }

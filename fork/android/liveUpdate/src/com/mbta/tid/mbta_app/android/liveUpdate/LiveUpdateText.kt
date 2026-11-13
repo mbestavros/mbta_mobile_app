@@ -25,7 +25,13 @@ class ContextStringLookup(private val context: Context) : StringLookup {
     override fun clockTime(time: EasternTimeInstant): String = time.formattedTime()
 }
 
-data class LiveUpdateText(val title: String, val text: String, val chip: String?)
+data class LiveUpdateText(
+    val title: String,
+    val text: String,
+    val chip: String?,
+    /** The ETA and the ride time, for the notification header. */
+    val subText: String? = null,
+)
 
 object LiveUpdateTextFormatter {
     /** The status chip shows its text in full only up to 7 characters. */
@@ -38,23 +44,7 @@ object LiveUpdateTextFormatter {
             return LiveUpdateText(title, finishedText(phase.reason, state, strings), chip = null)
         }
 
-        val stop = state.targetStopName
-        val main =
-            when (val label = state.label) {
-                LiveUpdateLabel.Boarding -> strings.string(R.string.live_update_text_boarding, stop)
-                LiveUpdateLabel.Arriving -> strings.string(R.string.live_update_text_arriving, stop)
-                LiveUpdateLabel.Approaching ->
-                    strings.string(R.string.live_update_text_approaching, stop)
-                is LiveUpdateLabel.Minutes ->
-                    strings.string(R.string.live_update_text_minutes, label.minutes, stop)
-                is LiveUpdateLabel.ClockTime ->
-                    strings.string(
-                        R.string.live_update_text_clock_time,
-                        strings.clockTime(label.time),
-                        stop,
-                    )
-                LiveUpdateLabel.Unknown -> strings.string(R.string.live_update_text_unknown, stop)
-            }
+        val main = statusText(state, strings)
         val stopsAway = state.stopsAway
         val text =
             if (stopsAway != null && stopsAway > 0 && state.label != LiveUpdateLabel.Boarding) {
@@ -62,8 +52,61 @@ object LiveUpdateTextFormatter {
             } else {
                 main
             }
-        return LiveUpdateText(title, text, chip(state.label, strings))
+        return LiveUpdateText(title, text, chip(state.label, strings), subText(state, strings))
     }
+
+    /** "4 min to Park Street", or the finished text. */
+    fun statusText(state: LiveUpdateState, strings: StringLookup): String {
+        val phase = state.phase
+        if (phase is LiveUpdatePhase.Finished) return finishedText(phase.reason, state, strings)
+        val stop = state.targetStopName
+        return when (val label = state.label) {
+            LiveUpdateLabel.Boarding -> strings.string(R.string.live_update_text_boarding, stop)
+            LiveUpdateLabel.Arriving -> strings.string(R.string.live_update_text_arriving, stop)
+            LiveUpdateLabel.Approaching ->
+                strings.string(R.string.live_update_text_approaching, stop)
+            is LiveUpdateLabel.Minutes ->
+                strings.string(R.string.live_update_text_minutes, label.minutes, stop)
+            is LiveUpdateLabel.ClockTime ->
+                strings.string(
+                    R.string.live_update_text_clock_time,
+                    strings.clockTime(label.time),
+                    stop,
+                )
+            LiveUpdateLabel.Unknown -> strings.string(R.string.live_update_text_unknown, stop)
+        }
+    }
+
+    /**
+     * "ETA 5:42 PM" without a destination. "Arrive 6:01 PM · 19 min ride" with a destination.
+     * Unknown parts are left out.
+     */
+    fun subText(state: LiveUpdateState, strings: StringLookup): String? {
+        if (state.phase is LiveUpdatePhase.Finished) return null
+        val eta = state.eta?.let { strings.clockTime(it) }
+        if (state.destinationStopName == null) {
+            return eta?.let { strings.string(R.string.live_update_sub_eta, it) }
+        }
+        val parts =
+            listOfNotNull(
+                eta?.let { strings.string(R.string.live_update_sub_arrive, it) },
+                state.rideDuration?.let { duration ->
+                    val totalMinutes = duration.inWholeMinutes.toInt().coerceAtLeast(1)
+                    if (totalMinutes < 60) {
+                        strings.string(R.string.live_update_ride_minutes, totalMinutes)
+                    } else {
+                        strings.string(
+                            R.string.live_update_ride_hours,
+                            totalMinutes / 60,
+                            totalMinutes % 60,
+                        )
+                    }
+                },
+            )
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(SEPARATOR)
+    }
+
+    private const val SEPARATOR = " · "
 
     fun chip(label: LiveUpdateLabel, strings: StringLookup): String? =
         when (label) {

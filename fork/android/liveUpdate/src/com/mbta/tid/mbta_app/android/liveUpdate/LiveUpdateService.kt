@@ -98,6 +98,7 @@ class LiveUpdateService : Service() {
             var lastSnapshotAt = startedAt
             var anchor: TrackingAnchor? = null
             var wasOnTrip = false
+            var boardingTime: EasternTimeInstant? = null
 
             launch {
                 while (true) {
@@ -138,8 +139,10 @@ class LiveUpdateService : Service() {
                             currentAnchor,
                             wasOnTrip,
                             EasternTimeInstant.now(),
+                            boardingTime,
                         )
                     if (snapshot.vehicleOnTrip != null) wasOnTrip = true
+                    boardingTime = state.boardingTime
                     val text = LiveUpdateTextFormatter.format(state, strings)
                     controller?.publish(
                         LiveUpdateSession(currentRequest, snapshot, currentAnchor, state),
@@ -150,7 +153,12 @@ class LiveUpdateService : Service() {
                     } else {
                         post(
                             LiveUpdateNotification.ONGOING_ID,
-                            LiveUpdateNotification.ongoing(this@LiveUpdateService, state, text),
+                            LiveUpdateNotification.ongoing(
+                                this@LiveUpdateService,
+                                state,
+                                text,
+                                LiveUpdateDeepLink.path(currentRequest, snapshot.global),
+                            ),
                         )
                     }
                 }

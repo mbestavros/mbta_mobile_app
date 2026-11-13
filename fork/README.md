@@ -33,6 +33,10 @@ The workflow `.github/workflows/fork-android-release.yaml` has three jobs:
 | `sign` | No | Signing secrets from the `android-release` environment |
 | `release` | No | Token that can create releases, no secrets |
 
+The `build` job gives `--init-script fork/android/fork.init.gradle` to Gradle, so CI does not need
+the loader (see "Local setup"). Before the release build, the job checks the format of the fork
+Kotlin files and runs the Live Update tests.
+
 The app uses MBTA's production backend (`mobile-app-backend.mbtace.com`). The backend supplies the
 Mapbox token and all transit data. The fork contains no API keys.
 
@@ -377,12 +381,18 @@ When you tap Follow on a train, the app shows an Android Live Update. On Android
 shows on the lock screen and as a chip in the status bar. On earlier versions, it is an ongoing
 notification with a progress bar.
 
-- The Live Update shows the time until the train arrives at your stop.
-- On the trip page, a "Live update" button opens a list of the next stops. Select the stop where you
-  get off. After you board, the Live Update shows the time until you arrive.
+- The Live Update shows the time until the train arrives at your stop. The notification header
+  shows the ETA. With a destination, it shows the arrival time and the ride time.
+- While a trip is tracked, a pill shows on every screen of the app.
+  - On the trip page, it shows "Choose destination" or "To <stop>". Tap it to open a list of the
+    next stops. Select the stop where you get off. After you board, the Live Update shows the time
+    until you arrive.
+  - On other screens, it shows "Return to trip tracking". Tap it to open stop details with the
+    trip selected. Tap Follow to open the trip page.
+- Tap the notification to open stop details with the trip selected.
 - Without a destination, the Live Update ends when the train leaves your stop. With a destination,
   it ends when the train arrives there.
-- Use "Stop" in the notification, or "Stop live update" in the list, to end it. If you swipe it
+- Use "Stop" in the notification, or "Stop tracking" in the list, to end it. If you swipe it
   away, it does not come back for that trip.
 
 The feature does not change upstream files:
@@ -392,7 +402,8 @@ The feature does not change upstream files:
 | `liveUpdate/AndroidManifest.xml` | `liveUpdate.gradle` adds it to each variant with the variant API |
 | `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
 | `FollowDetector` | Reads the map and trip details view models to detect the trip page |
-| `LiveUpdateOverlayInstaller` | Adds the "Live update" button above `MainActivity`'s content |
+| `LiveUpdateOverlayInstaller` | Adds the pill above `MainActivity`'s content |
+| `LiveUpdateDeepLink` | Opens the trip with the app's stop deep link |
 | `LiveUpdateService` | A foreground service with its own websocket. The app closes its socket in the background. |
 
 The feature uses these upstream APIs. If upstream changes one, the fork does not compile:
@@ -402,9 +413,15 @@ The feature uses these upstream APIs. If upstream changes one, the fork does not
 - `makeNativeModule`, `ErrorBannerStateRepository`, `DebugRepository`, and the repository
   interfaces for trips, trip predictions, vehicles and global data.
 - `TripDetailsStopList.fromPieces`, `TripDetailsStopList.splitForTarget` and `Stop.resolveParent`.
-- In `androidApp`: `appVariant`, `decodeMessage`, `Socket.wrapped()`, `MainActivity`,
-  `MyApplicationTheme`, `notificationPermissionState`, `formattedTime()`,
-  `R.drawable.app_icon_monochrome` and `R.string.current_locale`.
+- `DeepLinkState.Stop`, `DeepLinkState.from` and `GlobalResponse.getLineOrRoute`.
+- In `androidApp`: `appVariant`, `decodeMessage`, `Socket.wrapped()`, `MainActivity`
+  (`deepLinkStateFlow` and the `deep_link_path` intent extra), `MyApplicationTheme`, `Typography`,
+  `haloContainer`, `notificationPermissionState`, `formattedTime()`, `R.drawable.app_icon_monochrome`,
+  `R.drawable.fa_check`, `R.drawable.fa_xmark`, `R.drawable.fa_chevron_right`, the `R.color` values
+  `fill2`, `fill3`, `text`, `deemphasized`, `key`, `delete`, `delete_background` and `error`, and
+  `R.string.current_locale`.
+- The More page does not handle deep links. From the More page, "Return to trip tracking" goes
+  back to the map page first. If upstream adds more pages outside the map page, check this.
 
 Run the feature tests:
 ```
@@ -417,9 +434,13 @@ Test on a phone:
    ```
    adb shell dumpsys notification --noredact | grep -A20 live_updates | grep -i promot
    ```
-3. On the trip page, tap "Live update" and select a destination. Check that the notification changes.
-4. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
-5. Tap "Stop". Check that the notification goes away.
+3. On the trip page, tap "Choose destination" and select a destination. Check that the
+   notification changes and that its header shows the arrival time and the ride time.
+4. Go to Favorites, Nearby and More. Check that "Return to trip tracking" shows above the tabs.
+   Tap it. Check that stop details opens with the trip selected.
+5. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
+6. Tap the notification. Check that stop details opens with the trip selected.
+7. Tap "Stop". Check that the notification goes away.
 
 ## Known limitations
 - Push notifications do not work. MBTA's backend sends them through MBTA's Firebase project.

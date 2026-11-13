@@ -85,6 +85,8 @@ object LiveUpdateStateCalculator {
      * @param wasOnTrip true if an earlier snapshot showed the vehicle on this trip. Then a vehicle
      *   on another trip means that this trip is complete. Before that, the vehicle can still be
      *   finishing its previous trip.
+     * @param rememberedBoardingTime the last known boarding time. The stop list drops the boarding
+     *   stop after the vehicle leaves it, so the ride time needs the earlier value.
      */
     fun compute(
         snapshot: TrackerSnapshot,
@@ -92,6 +94,7 @@ object LiveUpdateStateCalculator {
         anchor: TrackingAnchor,
         wasOnTrip: Boolean,
         now: EasternTimeInstant,
+        rememberedBoardingTime: EasternTimeInstant? = null,
     ): LiveUpdateState {
         val vehicle = snapshot.vehicleOnTrip
         val current = vehicle?.currentStopSequence
@@ -138,6 +141,15 @@ object LiveUpdateStateCalculator {
             if (riding && destinationSequence != null) destinationSequence else boardingSequence
         val targetEntry = if (riding) destinationEntry else boardingEntry
         val targetTime = targetEntry?.targetTime()
+        val boardingTime = boardingEntry?.departureTime() ?: rememberedBoardingTime
+        val destinationArrival = destinationEntry?.targetTime()
+        val eta = if (destinationSequence != null) destinationArrival else targetTime
+        val rideDuration =
+            if (destinationArrival != null && boardingTime != null) {
+                (destinationArrival - boardingTime).takeIf { it.isPositive() }
+            } else {
+                null
+            }
 
         val label =
             when {
@@ -168,6 +180,10 @@ object LiveUpdateStateCalculator {
                 else anchor.boardingStopName,
             label = label,
             targetTime = targetTime,
+            boardingTime = boardingTime,
+            destinationArrival = destinationArrival,
+            eta = eta,
+            rideDuration = rideDuration,
             stopsAway = stopsAway,
             progress = anchor.vehiclePosition(vehicle).coerceIn(0, progressMax),
             progressMax = progressMax,
@@ -198,6 +214,12 @@ object LiveUpdateStateCalculator {
             ?: prediction?.departureTime
             ?: schedule?.arrivalTime
             ?: schedule?.departureTime
+
+    private fun TripDetailsStopList.Entry.departureTime(): EasternTimeInstant? =
+        prediction?.departureTime
+            ?: prediction?.arrivalTime
+            ?: schedule?.departureTime
+            ?: schedule?.arrivalTime
 
     private fun Prediction?.isCancelledOrSkipped(): Boolean =
         this?.scheduleRelationship == Prediction.ScheduleRelationship.Cancelled ||

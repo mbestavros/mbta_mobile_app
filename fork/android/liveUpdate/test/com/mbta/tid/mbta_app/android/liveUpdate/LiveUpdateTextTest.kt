@@ -30,6 +30,10 @@ class LiveUpdateTextTest {
                 R.string.live_update_finished_trip_ended to "Trip complete",
                 R.string.live_update_finished_cancelled to "Trip cancelled at %1\$s",
                 R.string.live_update_finished_already_passed to "Already past %1\$s",
+                R.string.live_update_sub_eta to "ETA %1\$s",
+                R.string.live_update_sub_arrive to "Arrive %1\$s",
+                R.string.live_update_ride_minutes to "%1\$d min ride",
+                R.string.live_update_ride_hours to "%1\$d hr %2\$d min ride",
             )
 
         override fun string(id: Int, vararg args: Any): String = strings.getValue(id).format(*args)
@@ -48,11 +52,57 @@ class LiveUpdateTextTest {
     private val anchor =
         checkNotNull(TrackingAnchor.from(f.snapshot(f.vehicle(InTransitTo, 20)), f.request))
 
+    private fun state(snapshot: TrackerSnapshot, request: LiveUpdateRequest = f.request) =
+        LiveUpdateStateCalculator.compute(snapshot, request, anchor, true, f.now)
+
     private fun text(snapshot: TrackerSnapshot, request: LiveUpdateRequest = f.request) =
-        LiveUpdateTextFormatter.format(
-            LiveUpdateStateCalculator.compute(snapshot, request, anchor, true, f.now),
-            strings,
+        LiveUpdateTextFormatter.format(state(snapshot, request), strings)
+
+    @Test
+    fun `sub text without a destination is the ETA`() {
+        val text = text(f.snapshot(f.vehicle(InTransitTo, 20), mapOf(30 to 4.minutes)))
+
+        assertEquals("ETA 9:30 AM", text.subText)
+    }
+
+    @Test
+    fun `sub text with a destination has the arrival and the ride time`() {
+        val text =
+            text(
+                f.snapshot(f.vehicle(InTransitTo, 20), mapOf(30 to 4.minutes, 50 to 12.minutes)),
+                f.requestWithDestination,
+            )
+
+        assertEquals("Arrive 9:30 AM · 8 min ride", text.subText)
+    }
+
+    @Test
+    fun `sub text leaves out unknown parts`() {
+        val noPredictions = state(f.snapshot(f.vehicle(InTransitTo, 20)), f.requestWithDestination)
+        val longRide =
+            state(
+                    f.snapshot(
+                        f.vehicle(InTransitTo, 20),
+                        mapOf(30 to 4.minutes, 50 to 12.minutes),
+                    ),
+                    f.requestWithDestination,
+                )
+                .copy(rideDuration = 75.minutes)
+
+        assertNull(LiveUpdateTextFormatter.subText(noPredictions, strings))
+        assertNull(text(f.snapshot(f.vehicle(InTransitTo, 40))).subText)
+        assertEquals(
+            "Arrive 9:30 AM · 1 hr 15 min ride",
+            LiveUpdateTextFormatter.subText(longRide, strings),
         )
+    }
+
+    @Test
+    fun `status text has no stop count`() {
+        val state = state(f.snapshot(f.vehicle(InTransitTo, 20), mapOf(30 to 4.minutes)))
+
+        assertEquals("4 min to C", LiveUpdateTextFormatter.statusText(state, strings))
+    }
 
     @Test
     fun `waiting text has the countdown and the stops away`() {
