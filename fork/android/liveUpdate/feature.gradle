@@ -1,0 +1,6 @@
+// Live Update feature. Applied to :androidApp by fork/android/fork.init.gradle.
+// Code, res and the manifest (service, initializer, permissions) are in src/main/.
+
+// NotificationCompat.ProgressStyle, setRequestPromotedOngoing and setShortCriticalText
+// need androidx.core 1.17 or later.
+project.dependencies.add('implementation', 'androidx.core:core-ktx:1.18.0')

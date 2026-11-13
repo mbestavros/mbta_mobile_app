@@ -1,0 +1,47 @@
+// Fork release identity. Applied to :androidApp by fork/android/fork.init.gradle.
+// The manifest (label, analytics off) and Firebase placeholders are in src/release/.
+// See README.md in this folder.
+
+def components = project.extensions.getByName('androidComponents')
+
+// finalizeDsl runs after upstream's android {} block, so upstream cannot silently override these.
+forkExpect('release: build type')
+components.finalizeDsl { android ->
+    android.buildTypes.getByName('release') {
+        // No versionNameSuffix: AppVersion.parse() accepts only "X.Y.Z".
+        applicationIdSuffix = '.mbestavros'
+        // Upstream bakes SENTRY_DSN_ANDROID from .envrc into defaultConfig, and MainActivity starts
+        // Sentry in any non-debug build with a DSN. A build type field wins over defaultConfig.
+        buildConfigField('String', 'SENTRY_DSN', '""')
+    }
+    forkDone('release: build type')
+}
+
+// Never contact MBTA's Sentry organization.
+def sentryOff = ['telemetry', 'autoUploadProguardMapping', 'autoUploadSourceContext', 'includeSourceContext']
+def disableSentry = { sentry ->
+    sentryOff.each { name ->
+        if (!sentry.hasProperty(name)) {
+            throw new GradleException("fork: Sentry extension has no property '$name'. " +
+                "Update fork/android/release/feature.gradle.")
+        }
+        sentry."$name".set(false)
+    }
+}
+forkExpect('release: Sentry')
+project.plugins.withId('io.sentry.android.gradle') {
+    def sentry = project.extensions.getByName('sentry')
+    // Set now for anything Sentry reads early, and again after upstream's sentry {} block.
+    disableSentry(sentry)
+    components.finalizeDsl {
+        disableSentry(sentry)
+        forkDone('release: Sentry')
+    }
+}
+// Backstop: no Sentry upload task runs, whatever the extension says.
+project.tasks.configureEach { task ->
+    def name = task.name.toLowerCase()
+    if (name.contains('sentry') && name.contains('upload')) {
+        task.enabled = false
+    }
+}

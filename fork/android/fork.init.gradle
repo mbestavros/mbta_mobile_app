@@ -1,12 +1,125 @@
-// Entry point for all fork-only build changes. Upstream build files stay untouched.
-// Use: ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
-// Or install the loader in ~/.gradle/init.d/ (see fork/README.md) to apply it to every build.
+// Fork feature loader for :androidApp. Upstream build files stay untouched.
+// Use: ./gradlew --init-script fork/android/fork.init.gradle <tasks>
+//
+// Each folder fork/android/<feature>/ is one feature, laid out like an Android module:
+//   src/<sourceSet>/kotlin, java, res   added to android.sourceSets.<sourceSet>
+//   src/<sourceSet>/AndroidManifest.xml added to matching variants with addStaticManifestFile
+//   feature.gradle                      optional, applied to :androidApp for feature-only DSL
+// <sourceSet> is main, test, androidTest, a build type, a product flavor or a variant name.
+//
+// Upstream breakage must fail the build, not silently skip a feature. A feature.gradle calls
+// forkExpect('<hook>') when it registers a hook and forkDone('<hook>') when the hook runs.
+// After configuration the loader fails if a hook never ran.
+//
+// ~/.gradle/init.d/mbta-fork.gradle (see fork/android/release/README.md) can also apply this script.
 
-// The loader and --init-script can both be active. Apply only once.
+// The init.d loader and --init-script can both be active. Apply only once.
 if (gradle.ext.has('mbtaForkApplied')) return
 gradle.ext.mbtaForkApplied = true
 
-def forkAndroidDir = buildscript.sourceFile.parentFile
+def appPath = ':androidApp'
+def state = [agpApplied: false, expected: new LinkedHashMap<String, Boolean>()]
 
-gradle.apply(from: new File(forkAndroidDir, 'identity.gradle'))
-gradle.apply(from: new File(forkAndroidDir, 'liveUpdate/liveUpdate.gradle'))
+gradle.allprojects { project ->
+    if (project.path != appPath) return
+
+    def forkDir = project.rootProject.file('fork/android')
+    def features = (forkDir.listFiles()?.findAll { it.isDirectory() } ?: []).sort { it.name }
+
+    project.ext.forkExpect = { String hook -> state.expected[hook] = false }
+    project.ext.forkDone = { String hook -> state.expected[hook] = true }
+
+    project.plugins.withId('com.android.application') {
+        state.agpApplied = true
+        def components = project.extensions.getByName('androidComponents')
+
+        // feature name -> [sourceSet name -> src/<sourceSet> dir]
+        def sourceSetDirs = features.collectEntries { feature ->
+            def src = new File(feature, 'src')
+            def dirs = (src.listFiles()?.findAll { it.isDirectory() } ?: []).sort { it.name }
+            [(feature.name): dirs.collectEntries { [(it.name): it] }]
+        }
+
+        // Source dirs go through the DSL. finalizeDsl runs after upstream's android {} block,
+        // so flavor and build type source sets exist by then.
+        state.expected['loader: source sets'] = false
+        components.finalizeDsl { android ->
+            sourceSetDirs.each { featureName, dirs ->
+                dirs.each { ssName, dir ->
+                    def sourceSet = android.sourceSets.findByName(ssName)
+                    if (sourceSet == null) {
+                        throw new GradleException("fork: $appPath has no source set '$ssName' " +
+                            "(fork/android/$featureName/src/$ssName). Rename or remove that folder.")
+                    }
+                    ['kotlin', 'java', 'res'].each { kind ->
+                        def kindDir = new File(dir, kind)
+                        if (kindDir.isDirectory()) sourceSet."$kind".directories.add(kindDir.path)
+                    }
+                }
+            }
+            state.expected['loader: source sets'] = true
+        }
+
+        // Manifests go through the variant API, which adds to upstream's manifests instead of
+        // replacing a source set's manifest slot.
+        def manifests = []
+        sourceSetDirs.each { featureName, dirs ->
+            dirs.each { ssName, dir ->
+                def manifest = new File(dir, 'AndroidManifest.xml')
+                if (!manifest.isFile()) return
+                if (ssName in ['test', 'androidTest']) {
+                    throw new GradleException("fork: test manifests are not supported: $manifest")
+                }
+                manifests << [sourceSet: ssName, file: manifest]
+            }
+        }
+        if (!manifests.isEmpty()) {
+            state.expected['loader: manifests'] = false
+            components.onVariants(components.selector().all()) { variant ->
+                def names = ['main', variant.name, variant.buildType] +
+                    variant.productFlavors.collect { it.second }
+                manifests.each { m ->
+                    if (m.sourceSet in names) {
+                        variant.sources.manifests.addStaticManifestFile(m.file.path)
+                    }
+                }
+                state.expected['loader: manifests'] = true
+            }
+        }
+
+        features.each { feature ->
+            def script = new File(feature, 'feature.gradle')
+            if (script.isFile()) project.apply(from: script)
+        }
+    }
+}
+
+gradle.projectsEvaluated { g ->
+    // Init scripts also run for nested builds such as buildSrc. Check only the main build.
+    if (g.parent != null) return
+    if (g.rootProject.findProject(appPath) == null) {
+        throw new GradleException("fork: project $appPath not found. Update fork/android/fork.init.gradle.")
+    }
+    if (!state.agpApplied) {
+        throw new GradleException("fork: $appPath does not apply com.android.application. " +
+            "Update fork/android/fork.init.gradle.")
+    }
+    def missing = state.expected.findAll { !it.value }.keySet()
+    if (!missing.isEmpty()) {
+        throw new GradleException("fork: these build hooks never ran: ${missing.join(', ')}. " +
+            "Upstream's build changed. Update the fork scripts.")
+    }
+}
+
+// Format and check the fork Kotlin code with the same rules as upstream (spotlessCheck).
+gradle.rootProject { root ->
+    root.pluginManager.withPlugin('com.diffplug.spotless') {
+        def spotless = root.extensions.getByName('spotless')
+        def kotlinExtension =
+            spotless.class.classLoader.loadClass('com.diffplug.gradle.spotless.KotlinExtension')
+        spotless.format('forkKotlin', kotlinExtension) {
+            target('fork/**/*.kt')
+            ktfmt().kotlinlangStyle()
+        }
+    }
+}
