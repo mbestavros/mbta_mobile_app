@@ -4,3 +4,23 @@
 // NotificationCompat.ProgressStyle, setRequestPromotedOngoing and setShortCriticalText
 // need androidx.core 1.17 or later.
 project.dependencies.add('implementation', 'androidx.core:core-ktx:1.18.0')
+
+// Compose UI tests on Robolectric (src/test). Compose versions come from upstream's catalog and BOM.
+// ui-test-manifest (the test activity) is already a debugImplementation dependency upstream.
+def libs = project.extensions.getByType(VersionCatalogsExtension).named('libs')
+['compose-bom', 'compose-ui-test-junit4'].each { alias ->
+    if (!libs.findLibrary(alias).present) {
+        throw new GradleException("fork: liveUpdate needs '${alias}' in gradle/libs.versions.toml")
+    }
+}
+project.dependencies.add('testImplementation',
+        project.dependencies.platform(libs.findLibrary('compose-bom').get()))
+project.dependencies.add('testImplementation', libs.findLibrary('compose-ui-test-junit4').get())
+project.dependencies.add('testImplementation', 'org.robolectric:robolectric:4.16.1')
+
+// Robolectric needs the merged resources to resolve R.string and R.drawable.
+forkExpect('liveUpdate: unit test resources')
+project.extensions.getByName('androidComponents').finalizeDsl { android ->
+    android.testOptions.unitTests.includeAndroidResources = true
+    forkDone('liveUpdate: unit test resources')
+}

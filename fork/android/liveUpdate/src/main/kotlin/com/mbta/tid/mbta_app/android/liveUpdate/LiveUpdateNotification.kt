@@ -23,9 +23,6 @@ object LiveUpdateNotification {
     const val FINAL_ID = 4_002
     private const val FINAL_TIMEOUT_MS = 60_000L
 
-    /** The extra name that MainActivity.handleIntent reads (MainActivity.deepLinkPathKey). */
-    private const val DEEP_LINK_PATH_EXTRA = "deep_link_path"
-
     fun ensureChannel(context: Context) {
         val channel =
             NotificationChannel(
@@ -162,18 +159,22 @@ object LiveUpdateNotification {
         return style
     }
 
-    private fun openAppIntent(context: Context, deepLinkPath: String? = null): PendingIntent? =
-        context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { intent ->
-            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            // MainActivity reads this extra and opens stop details with the trip selected.
-            deepLinkPath?.let { intent.putExtra(DEEP_LINK_PATH_EXTRA, it) }
-            PendingIntent.getActivity(
-                context,
-                0,
-                intent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-        }
+    /** With [deepLinkPath], MainActivity opens stop details with the trip selected. */
+    private fun openAppIntent(context: Context, deepLinkPath: String? = null): PendingIntent? {
+        val intent =
+            if (deepLinkPath != null) {
+                LiveUpdateDeepLink.intent(context, deepLinkPath)
+            } else {
+                context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return null
+            }
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
 
     private fun serviceIntent(context: Context, action: String, requestCode: Int): PendingIntent =
         PendingIntent.getService(
