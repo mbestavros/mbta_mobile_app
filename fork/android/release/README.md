@@ -1,26 +1,32 @@
-# Fork: Android release build
+# Fork feature: Android release build
 
-This folder holds fork-only build changes and features. Upstream files stay unchanged, so rebases on
-`mbta/mobile_app` do not conflict. Do not edit upstream files for a fork feature. Put the feature in
-`fork/android/<feature>/` and add it to the build from `fork/android/fork.init.gradle`.
+This feature builds, signs and publishes the fork's own prod APK. It is a fork feature like any
+other (see `fork/README.md`), so upstream files stay unchanged.
 
 ## What the fork build changes
-`fork/android/fork.init.gradle` applies these scripts:
-
-| Script | Build types | Change |
-|---|---|---|
-| `identity.gradle` | Release | The fork identity (see below) |
-| `liveUpdate/liveUpdate.gradle` | All | The Live Update feature (see "Live Update") |
-
-`identity.gradle` changes the `:androidApp` release build type:
+The feature changes the `:androidApp` release build type:
 
 - The application ID is `com.mbta.tid.mbta_app.mbestavros`. The app installs next to the official app.
 - The app label is "MBTA Go (mbestavros)".
 - Firebase uses placeholder values and analytics is deactivated. No data goes to MBTA's Firebase project.
-- Sentry upload tasks and Sentry plugin telemetry are off.
+- `BuildConfig.SENTRY_DSN` is empty, so the app never starts Sentry, even when `SENTRY_DSN_ANDROID`
+  is set in `.envrc` or the environment.
+- Sentry source bundles, upload tasks and Sentry plugin telemetry are off.
 
-To use a different identity, change `applicationIdSuffix` in `fork/android/identity.gradle` and
-`android:label` in `fork/android/AndroidManifest.xml`.
+Files in `fork/android/release/`:
+
+| File | Purpose |
+|---|---|
+| `feature.gradle` | Application ID suffix, empty Sentry DSN, Sentry plugin settings |
+| `src/release/AndroidManifest.xml` | App label, analytics and messaging auto-init off |
+| `src/release/res/values/fork-firebase.xml` | Placeholder Firebase values |
+| `check-apk.sh` | Checks an APK's package, label, version name, analytics flag and that it has no Sentry DSN |
+
+To use a different identity, change `applicationIdSuffix` in `feature.gradle`, `android:label` in
+`src/release/AndroidManifest.xml`, and the expected values at the top of `check-apk.sh`.
+
+If upstream renames something the fork scripts use, the build fails with a message that starts with
+`fork:`. Fix the fork script that the message names.
 
 Do not add a version name suffix. `AppVersion.parse()` accepts only `X.Y.Z`,
 and the app crashes at launch if the version name has a suffix.
@@ -96,6 +102,11 @@ project in Android Studio.
 ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
 ```
 The output is `androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk`.
+Check it with the same script that CI runs:
+```
+fork/android/release/check-apk.sh androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk
+```
+Check: the last line starts with `check-apk: OK`.
 
 ## One-time GitHub setup
 Do these steps in order. Set `REPO` first, and use it in each command:
@@ -219,10 +230,13 @@ Always give `--repo`. When a clone has an `upstream` remote, `gh` can select the
    ```
    Example: `fork-android-v2.2.1-1`.
 3. Wait for `build` to finish. Then approve the `android-release` deployment in the Actions run.
-4. Download the APK from the GitHub Release. You do not need the `.idsig` file.
+4. Download the APK from the GitHub Release.
 5. Install the APK on your phone.
 
-The workflow sets the version code from the workflow run number, so each new run can update the app.
+The workflow sets the version code from the tag: `fork-android-vX.Y.Z-N` gives
+`X*1000000 + Y*10000 + Z*100 + N`. A higher version or build number always gives a higher code,
+so the phone accepts the update. Y, Z and N must each be under 100, or the build fails.
+The `build` job also fails if the APK's version name is not the `X.Y.Z` from the tag.
 
 If a release fails, make a new tag with a higher build number. Do not run the old tag again.
 A tag uses the workflow file from its own commit. An immutable release cannot be replaced.
@@ -266,11 +280,6 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    ```
    Check: if a file is listed, read its diff. Look for changes to the release build type,
    source sets, the Sentry plugin, Firebase setup, or the version format.
-4. Make sure upstream has no `release` source set:
-   ```
-   git ls-tree -d upstream/main androidApp/src/release
-   ```
-   Check: the output is empty. If not, the fork manifest and upstream's release manifest may conflict.
 
 ### 3. Rebase
 1. Rebase the fork commits on upstream:
@@ -314,13 +323,13 @@ Do these steps in order. Each step has a check. Stop if a check fails.
    ```
    ./gradlew --init-script fork/android/fork.init.gradle :androidApp:assembleProdRelease
    ```
-   Check: `BUILD SUCCESSFUL`. The Sentry upload tasks show `SKIPPED`.
+   Check: `BUILD SUCCESSFUL`. A message that starts with `fork:` means upstream changed something
+   the fork scripts use.
 4. Check the APK:
    ```
-   BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-   "$BT/aapt2" dump badging androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk | head -n 1
+   fork/android/release/check-apk.sh androidApp/build/outputs/apk/prod/release/androidApp-prod-release-unsigned.apk
    ```
-   Check: the package name has the fork suffix. The version name is `X.Y.Z` with no suffix.
+   Check: the last line starts with `check-apk: OK`.
 5. Optional: test the APK on a phone. See "Test on a phone".
 
 ### 5. Push
@@ -408,7 +417,7 @@ The feature does not change upstream files:
 
 | Part | How it connects to the app |
 |---|---|
-| `liveUpdate/AndroidManifest.xml` | `liveUpdate.gradle` adds it to each variant with the variant API |
+| `liveUpdate/src/main/AndroidManifest.xml` | The loader adds it to each variant with the variant API |
 | `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
 | `TripPage` | Reads the map and trip details view models to find the open trip page |
 | `LiveUpdateOverlayInstaller` | Adds the pill above `MainActivity`'s content |
@@ -456,7 +465,10 @@ Test on a phone:
 
 ## Known limitations
 - Push notifications do not work. MBTA's backend sends them through MBTA's Firebase project.
-- There is no crash reporting.
+- There is no crash reporting. The fork blanks the Sentry DSN.
+- Links to `go.mbta.com` and `mobile-app-backend.mbtace.com` do not open the fork by default.
+  Upstream declares them as verified App Links, and MBTA's `assetlinks.json` does not list the fork's
+  signing certificate. You can turn them on by hand in Android's "Open by default" settings for the app.
 - The Mapbox SDK can send its own telemetry. The fork does not change this.
 - The fork depends on MBTA's backend. If MBTA adds app attestation or rate limits, the fork can stop working.
 - CI does not run upstream's unit tests or emulator tests. Run the unit tests locally.
