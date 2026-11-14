@@ -30,8 +30,9 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 // A plain Application: MainApplication needs Firebase, which unit tests don't have.
+// SDK 35: Robolectric's SDK 36 runtime needs Java 21, CI uses Java 17.
 @RunWith(RobolectricTestRunner::class)
-@Config(application = Application::class)
+@Config(application = Application::class, sdk = [35])
 class LiveUpdateOverlayAccessibilityTest {
     @get:Rule val compose = createComposeRule()
 

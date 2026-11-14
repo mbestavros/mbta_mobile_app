@@ -140,7 +140,8 @@ Run the feature tests (the loader must be active, see [fork/README.md](../../REA
 ./gradlew -I fork/android/fork.init.gradle :androidApp:testStagingDebugUnitTest --tests '*liveUpdate*'
 ```
 The Compose UI tests (`LiveUpdateOverlayAccessibilityTest`) run on Robolectric. The first run
-downloads Robolectric's Android runtime jar.
+downloads Robolectric's Android runtime jar. The Robolectric tests pin `sdk = [35]`: Robolectric's
+SDK 36 runtime needs Java 21, and CI uses Java 17 from `.tool-versions`.
 
 Test on a phone:
 1. Follow a trip. Check that no Live Update starts and that "Track this trip" shows. Tap it.
