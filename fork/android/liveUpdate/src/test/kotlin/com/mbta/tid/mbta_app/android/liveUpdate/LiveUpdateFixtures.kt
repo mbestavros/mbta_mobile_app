@@ -55,12 +55,16 @@ class LiveUpdateFixtures {
         status: Vehicle.CurrentStatus,
         stopSequence: Int,
         tripId: String = trip.id,
+        occupancy: Vehicle.OccupancyStatus = Vehicle.OccupancyStatus.NoDataAvailable,
+        carOccupancy: List<Vehicle.OccupancyStatus> = emptyList(),
     ): Vehicle = objects.vehicle {
         id = "v1"
         currentStatus = status
         currentStopSequence = stopSequence
         stopId = stopsBySequence.getValue(stopSequence).id
         this.tripId = tripId
+        occupancyStatus = occupancy
+        carOccupancy.forEach { carriage { occupancyStatus = it } }
     }
 
     /**

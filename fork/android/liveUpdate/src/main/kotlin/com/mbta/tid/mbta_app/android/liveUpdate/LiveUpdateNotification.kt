@@ -6,10 +6,14 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.core.graphics.toColorInt
 import com.mbta.tid.mbta_app.android.R
+import com.mbta.tid.mbta_app.model.RoutePillSpec
+import com.mbta.tid.mbta_app.model.RouteType
 import com.mbta.tid.mbta_app.utils.EasternTimeInstant
 
 /**
@@ -60,6 +64,10 @@ object LiveUpdateNotification {
         val destinationPosition: Int?,
         val routeColor: String,
         val deepLinkPath: String?,
+        val routePill: RoutePillSpec?,
+        val routeType: RouteType?,
+        /** The marker is shown only while the vehicle position is known. */
+        val showTracker: Boolean,
     )
 
     fun ongoingContent(
@@ -75,7 +83,13 @@ object LiveUpdateNotification {
             state.destinationPosition,
             state.routeColor,
             deepLinkPath,
+            state.routePill,
+            state.routeType,
+            showTracker(state),
         )
+
+    private fun showTracker(state: LiveUpdateState): Boolean =
+        state.routeType != null && state.stopsAway != null
 
     /** @param deepLinkPath opens the tracked trip when the user taps the notification. */
     fun ongoing(
@@ -91,7 +105,8 @@ object LiveUpdateNotification {
                 .setContentText(text.text)
                 .setSubText(text.subText)
                 .setShortCriticalText(text.chip)
-                .setStyle(progressStyle(state, color))
+                .setStyle(progressStyle(context, state, color))
+        state.routePill?.let { builder.setLargeIcon(badge(context, it)) }
         if (deepLinkPath != null) builder.setContentIntent(openAppIntent(context, deepLinkPath))
 
         val clockTime = (state.label as? LiveUpdateLabel.ClockTime)?.time
@@ -132,11 +147,32 @@ object LiveUpdateNotification {
                 serviceIntent(context, LiveUpdateService.ACTION_STOP, 1),
             )
 
+    /** One route per session, so keep the last badges instead of drawing them on every post. */
+    private var badgeCache: Pair<RoutePillSpec, Bitmap>? = null
+    private var trackerCache: Pair<Pair<RouteType, String>, Bitmap>? = null
+
+    private fun badge(context: Context, spec: RoutePillSpec): Bitmap =
+        badgeCache?.takeIf { it.first == spec }?.second
+            ?: LiveUpdateRouteBadge.badge(context, spec).also { badgeCache = spec to it }
+
+    private fun tracker(context: Context, type: RouteType, color: String): Bitmap {
+        val key = type to color
+        return trackerCache?.takeIf { it.first == key }?.second
+            ?: LiveUpdateRouteBadge.tracker(context, type, color).also { trackerCache = key to it }
+    }
+
     private fun progressStyle(
+        context: Context,
         state: LiveUpdateState,
         color: Int?,
     ): NotificationCompat.ProgressStyle {
         val style = NotificationCompat.ProgressStyle().setStyledByProgress(true)
+        val routeType = state.routeType
+        if (routeType != null && showTracker(state)) {
+            style.setProgressTrackerIcon(
+                IconCompat.createWithBitmap(tracker(context, routeType, state.routeColor)),
+            )
+        }
         val boarding = state.boardingPosition
         val destination = state.destinationPosition
         val segments = buildList {

@@ -14,10 +14,25 @@
     <string name="live_update_text_minutes">%1$d min to %2$s</string>
     <string name="live_update_text_clock_time">Arrives at %2$s at %1$s</string>
     <string name="live_update_text_unknown">Waiting for predictions for %1$s</string>
+
+    <!-- Notification title while waiting for the vehicle. -->
+    <string name="live_update_wait_boarding">Boarding now</string>
+    <string name="live_update_wait_arriving">Arriving now</string>
+    <string name="live_update_wait_minutes">Arrives in %1$d min</string>
+    <string name="live_update_wait_clock_time">Arrives at %1$s</string>
+    <string name="live_update_wait_unknown">Waiting for predictions</string>
     <plurals name="live_update_stops_away">
-        <item quantity="one">%1$s · %2$d stop away</item>
-        <item quantity="other">%1$s · %2$d stops away</item>
+        <item quantity="one">%1$d stop away</item>
+        <item quantity="other">%1$d stops away</item>
     </plurals>
+    <!-- Stops left to ride, including the destination. -->
+    <plurals name="live_update_stops_left">
+        <item quantity="one">%1$d stop</item>
+        <item quantity="other">%1$d stops</item>
+    </plurals>
+    <string name="live_update_destination_next">next stop</string>
+    <string name="live_update_next_stop">Next stop: %1$s</string>
+    <string name="live_update_at_stop_eta">%1$s · ETA %2$s</string>
 
     <string name="live_update_sub_eta">ETA %1$s</string>
     <string name="live_update_sub_arrive">Arrive %1$s</string>
@@ -27,6 +42,10 @@
     <string name="live_update_chip_boarding">Board</string>
     <string name="live_update_chip_arriving">Now</string>
     <string name="live_update_chip_minutes">%1$d min</string>
+    <plurals name="live_update_chip_stops">
+        <item quantity="one">%1$d stop</item>
+        <item quantity="other">%1$d stops</item>
+    </plurals>
 
     <string name="live_update_finished_arrived">Arrived at %1$s</string>
     <string name="live_update_finished_departed">Left %1$s</string>
