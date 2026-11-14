@@ -48,10 +48,22 @@ class TripPageTest {
     }
 
     @Test
-    fun `overview map state is not the trip page`() {
+    fun `overview and stop selected are not the trip page`() {
+        // The trip details context stays TripDetails after the trip page closes.
+        val staleContext = state(filterA, Context.TripDetails)
         assertFalse(
             TripPage.isOpen(
                 MapViewModel.State(MapViewModel.LayerState.Overview, layersInitialized = true),
+                staleContext,
+            ),
+        )
+        assertFalse(
+            TripPage.isOpen(
+                MapViewModel.State(
+                    MapViewModel.LayerState.StopSelected(objects.stop { id = "place-pktrm" }, null),
+                    layersInitialized = true,
+                ),
+                staleContext,
             ),
         )
     }

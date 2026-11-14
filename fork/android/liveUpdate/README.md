@@ -10,15 +10,24 @@ notification with a progress bar.
   only way to start one. Follow and a tap on a vehicle on the map only open the trip page. If
   another trip is tracked, the new trip replaces it.
 - While a trip is tracked, a pill shows on every screen of the app.
-  - On the trip page, it shows "Choose destination" or "To <stop>". Tap it to open a list of the
-    next stops. Select the stop where you get off. After you board, the Live Update shows the time
-    until you arrive.
-  - On other screens, it shows "Return to trip tracking". Tap it to open stop details with the
-    trip selected. Tap Follow to open the trip page.
+  - On the tracked trip's page, it shows "Choose destination" or "To <stop>". Tap it to open a
+    list of the next stops. Select the stop where you get off. After you board, the Live Update
+    shows the time until you arrive.
+  - While you wait, it shows the same picker on stop details for the boarding or destination
+    station.
+  - On other screens, and on stop details once you are on the vehicle, it shows "Return to trip
+    tracking".
+- "Return to trip tracking" and the notification open the page for where you are:
+  - While you wait for the vehicle, they open stop details for the boarding station with the trip
+    selected, so you can also see other departures.
+  - After the vehicle leaves the boarding station, you are on it. They open the trip page, on top
+    of stop details, so Back returns to the station. The trip page targets the destination, so the
+    map fits the vehicle and the destination and upstream pins the destination.
+- If you open the tracked trip's page yourself (it targets the boarding station), the map also
+  pins the destination station. The pin stays while you move the map.
 - "Track this trip" shows only after the trip data loads. Some trips show "not available" on
   the trip page because the app can't load them. These trips can't be tracked. If no trip
   data comes in 2 minutes, the Live Update ends with "No data for this trip".
-- Tap the notification to open stop details with the trip selected.
 - Without a destination, the Live Update ends when the vehicle leaves your stop. With a destination,
   it ends when the vehicle arrives there.
 - Use "Stop" in the notification, or "Stop tracking" in the list, to end it. If you swipe it
@@ -27,26 +36,45 @@ notification with a progress bar.
   connected watches.
 
 ## How it connects to the app
-The feature does not change upstream files:
+The feature changes upstream in one place, approved as an exception to the fork rule. Each line is
+marked `// fork(liveUpdate)`:
+
+- `shared/.../routes/DeepLinkState.kt`: `DeepLinkState.Stop` has the optional fields `vehicleId`,
+  `follow` and `followStopId`, read from `/v/<vehicle>` and `/follow` or `/follow/<stop>` URL
+  segments, and a `followRoute` for the trip page. The trip page targets `followStopId`, else the
+  stop. Stop details underneath always opens the boarding station, so a terminal destination with
+  no departures can't hang it. The fields have defaults, so other callers don't change. iOS reads only `sheetRoute`, so it
+  still builds and opens stop details for these links.
+- `androidApp/.../pages/MapAndSheetPage.kt`: one line opens `followRoute` after `sheetRoute`.
+
+`DeepLinkFollowTest` in this feature tests the parser edit. On a rebase conflict in these files,
+keep upstream's version and add the marked lines back.
+
+Everything else is in this folder:
 
 | Part | How it connects to the app |
 |---|---|
 | `src/main/AndroidManifest.xml` | The loader adds it to each variant with the variant API |
 | `feature.gradle` | Adds `androidx.core` for `ProgressStyle`, and Robolectric and Compose UI test for the unit tests |
 | `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
-| `TripPage` | Reads the map and trip details view models to find the open trip page |
+| `TripPage` | Reads the map and trip details view models to find the open trip page. It uses the trip details `context`, not `following`, which turns off when you move the map. |
 | `LiveUpdateOverlayInstaller` | Adds the pill above `MainActivity`'s content |
 | `LiveUpdateDeepLink` | Opens the trip with the app's stop deep link, as an `ACTION_VIEW` intent to `MainActivity` |
+| `LiveUpdateMapPin` | Adds a Mapbox layer to the map's style for the destination pin |
 | `LiveUpdateService` | A foreground service with its own websocket. The app closes its socket in the background. |
 
 The feature uses these upstream APIs. If upstream changes one, the fork does not compile:
 
-- `ITripDetailsViewModel.models` (`context`, `tripData.tripFilter`, `tripData.trip`) and
-  `IMapViewModel.models` (`LayerState.TripSelected.following`, `LayerState.Overview`).
+- `ITripDetailsViewModel.models` (`context`, `tripData.tripFilter`, `tripData.trip`),
+  `IMapViewModel.models` (`LayerState.StopSelected`, `LayerState.TripSelected`,
+  `LayerState.Overview`) and `IStopDetailsViewModel.models` (`routeData.filters.stopId`).
 - `makeNativeModule`, `ErrorBannerStateRepository`, `DebugRepository`, and the repository
   interfaces for trips, trip predictions, vehicles and global data.
 - `TripDetailsStopList.fromPieces`, `TripDetailsStopList.splitForTarget` and `Stop.resolveParent`.
 - `DeepLinkState.Stop`, `DeepLinkState.from` and `GlobalResponse.getLineOrRoute`.
+- `StopLayerGenerator.createStopLayers`, `StopLayerGenerator.State.StopDetails`,
+  `StopFeaturesBuilder.stopSourceId`, the `SymbolLayer` style model, `ColorPalette`, and in
+  `androidApp`, `SymbolLayer.toMapbox()` and `MapLayerManager.puckAnchorLayerId`.
 - In `androidApp`: `appVariant`, `decodeMessage`, `Socket.wrapped()`, `MainActivity`
   (`deepLinkStateFlow`, `clearDeepLink`), `MyApplicationTheme`, `Typography`,
   `haloContainer`, `notificationPermissionState`, `formattedTime()`, `R.drawable.app_icon_monochrome`,
@@ -72,6 +100,12 @@ breaks at runtime. Check them after each rebase:
   relies on `MainActivity.onCreate` calling `setContent` before that task runs. `setContent`
   reuses a `ComposeView` that is already the first child of the content view, so if the order
   changes, the overlay replaces upstream's UI.
+- `LiveUpdateMapPin` finds the Mapbox `MapView` in the activity's view tree. Compose's `MapboxMap`
+  hosts it through `AndroidView`. It copies upstream's selected-pin layer, which it finds by the
+  `-selected-pin` ending of the layer ID. It adds its layer below the puck anchor slot, which puts
+  it above upstream's stop layers. While shown, it checks every second and adds the layer back if
+  the style dropped it. If upstream changes any of this, the pin is missing or drawn below the
+  stops. The rest of the feature still works.
 - `TripTracker` skips reconnects on parse errors by the start of upstream's message,
   `SocketError.FAILED_TO_PARSE` ("channel failed to parse"). That constant is internal to `shared`.
   If it changes, parse errors also reconnect, at most once every 10 seconds.
@@ -95,14 +129,21 @@ Test on a phone:
    notification changes and that its header shows the arrival time and the ride time. With
    TalkBack on, check that the list reads the rows as radio buttons and the chosen one as selected.
 4. Go to Favorites, Nearby and More. Check that "Return to trip tracking" shows above the tabs.
-   Tap it. Check that stop details opens with the trip selected. From More, the app restarts its
-   screen first. It must not close.
+   Before the vehicle departs, tap it. Check that stop details opens at the boarding station with
+   the trip selected. From More, the app restarts its screen first. It must not close. Check that
+   the pill now shows "Choose destination" and that a tap opens the list.
 5. Tap a different vehicle on the map. Check that "Track this trip" shows. Tap it. Check that the
    Live Update changes to the new trip.
 6. Lock the phone for 5 to 10 minutes. Check that the times and the progress bar still change.
-7. Tap the notification. Check that stop details opens with the trip selected, in the fork and
-   not in the official app if both are installed.
-8. Tap "Stop". Check that the notification goes away.
+7. Tap the notification before the vehicle departs. Check that stop details opens with the trip
+   selected, in the fork and not in the official app if both are installed.
+8. With a destination, after the vehicle leaves the boarding station, tap the notification and
+   "Return to trip tracking". Check that both open the trip page with the map showing both the
+   vehicle and the destination, and that Back returns to the station. There, check that the pill
+   shows "Return to trip tracking". Use a terminal destination, such as Alewife, at least once.
+9. Open the tracked trip from the boarding station with a destination. Check that the map pins
+   both stations. Pan and zoom the map. Switch dark mode. Check that the destination pin stays.
+10. Tap "Stop". Check that the notification goes away.
 
 ## Known limitations
 - The Live Update does not show service alerts. The trip page still shows them.

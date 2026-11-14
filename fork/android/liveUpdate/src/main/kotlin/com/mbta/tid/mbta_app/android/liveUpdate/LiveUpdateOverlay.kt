@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,7 +62,9 @@ import com.mbta.tid.mbta_app.android.util.Typography
 import com.mbta.tid.mbta_app.android.util.formattedTime
 import com.mbta.tid.mbta_app.android.util.modifiers.haloContainer
 import com.mbta.tid.mbta_app.android.util.notificationPermissionState
+import com.mbta.tid.mbta_app.map.ColorPalette
 import com.mbta.tid.mbta_app.viewModel.IMapViewModel
+import com.mbta.tid.mbta_app.viewModel.IStopDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.ITripDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.MapViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -73,26 +77,30 @@ private val TAB_BAR_HEIGHT = 72.dp
 
 /**
  * The Live Update pill. On a trip page that is not tracked, it offers to track the trip. This is
- * the only way to start a Live Update. On the trip page of the tracked trip, it opens the
- * destination sheet. On other screens, it opens the tracked trip again.
+ * the only way to start a Live Update. On the trip page of the tracked trip, and on the stop
+ * details page of its boarding or destination station, it opens the destination sheet. On other
+ * screens, it opens the tracked trip again.
  */
 @Composable
 fun LiveUpdateOverlay(
     controller: LiveUpdateController = koinInject(),
     mapViewModel: IMapViewModel = koinInject(),
     tripDetailsViewModel: ITripDetailsViewModel = koinInject(),
+    stopDetailsViewModel: IStopDetailsViewModel = koinInject(),
 ) {
     val session by controller.session.collectAsState()
     val pendingPermission by controller.pendingPermission.collectAsState()
     val mapState by mapViewModel.models.collectAsState()
     val tripState by tripDetailsViewModel.models.collectAsState()
+    val stopDetailsState by stopDetailsViewModel.models.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     if (pendingPermission != null) PermissionRequest(controller)
 
     val current = session
-    val pageFilter = TripPage.trackableFilter(TripPage.isOpen(mapState), tripState)
+    val tripPageOpen = TripPage.isOpen(mapState, tripState)
+    val pageFilter = TripPage.trackableFilter(tripPageOpen, tripState)
     if (pageFilter != null && pageFilter.tripId != current?.request?.tripId) {
         Pill(
             colorResource(R.color.key),
@@ -110,19 +118,39 @@ fun LiveUpdateOverlay(
     }
     if (current == null) return
     val onTrackedTripPage =
-        TripPage.isOpen(mapState) &&
-            tripState.tripData?.tripFilter?.tripId == current.request.tripId
+        tripPageOpen && tripState.tripData?.tripFilter?.tripId == current.request.tripId
+    val global = current.snapshot?.global
+    val onStationPage =
+        StationPage.isOpen(
+            StationPage.isStopDetails(mapState, tripState),
+            stopDetailsState,
+            StationPage.trackedStationIds(current.request, global),
+            global,
+        )
+    // Aboard, the trip page is the only page that matters, so the station page offers the way back.
+    val riding = current.state?.phase is LiveUpdatePhase.Riding
+    val showsPicker = onTrackedTripPage || (onStationPage && !riding)
     val onEntryScreen = mapState.layerState is MapViewModel.LayerState.Overview
 
+    // Upstream pins the trip page's target stop. A trip page opened from the notification targets
+    // the destination already, so only pin it when the target is another stop.
+    val destinationStationId =
+        current.request.destinationStopId?.let { LiveUpdateDeepLink.stationId(it, global) }
+    val pageTargetStationId =
+        tripState.tripData?.tripFilter?.stopId?.let { LiveUpdateDeepLink.stationId(it, global) }
+    DestinationMapPin(
+        destinationStationId?.takeIf { onTrackedTripPage && it != pageTargetStationId },
+    )
+
     var sheetOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(onTrackedTripPage) { if (!onTrackedTripPage) sheetOpen = false }
+    LaunchedEffect(showsPicker) { if (!showsPicker) sheetOpen = false }
 
     LiveUpdatePill(
         current,
-        onTrackedTripPage = onTrackedTripPage,
+        showsPicker = showsPicker,
         bottomPadding = if (onEntryScreen) TAB_BAR_HEIGHT + 12.dp else 16.dp,
     ) {
-        if (onTrackedTripPage) {
+        if (showsPicker) {
             sheetOpen = true
         } else {
             val activity = context.findMainActivity() ?: return@LiveUpdatePill
@@ -165,7 +193,9 @@ private fun returnToTrip(
     mayBeOnMorePage: Boolean,
 ) {
     val global = session.snapshot?.global
-    val target = LiveUpdateDeepLink.state(session.request, global)
+    val phase = session.state?.phase
+    val vehicleId = LiveUpdateDeepLink.vehicleId(session.request, session.snapshot)
+    val target = LiveUpdateDeepLink.state(session.request, phase, vehicleId, global)
     activity.deepLinkStateFlow.value = target
     if (!mayBeOnMorePage) return
     scope.launch {
@@ -173,10 +203,28 @@ private fun returnToTrip(
         if (activity.deepLinkStateFlow.value != target || activity.isFinishing) return@launch
         activity.clearDeepLink()
         activity.startActivity(
-            LiveUpdateDeepLink.intent(activity, LiveUpdateDeepLink.path(session.request, global))
+            LiveUpdateDeepLink.intent(
+                    activity,
+                    LiveUpdateDeepLink.path(session.request, phase, vehicleId, global),
+                )
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )
     }
+}
+
+/** Pins [stationId] on the map while it is not null. See [LiveUpdateMapPin]. */
+@Composable
+private fun DestinationMapPin(stationId: String?) {
+    val activity = LocalContext.current.findMainActivity() ?: return
+    val colorPalette = if (isSystemInDarkTheme()) ColorPalette.dark else ColorPalette.light
+    LaunchedEffect(stationId, colorPalette) {
+        if (stationId == null) {
+            LiveUpdateMapPin.hide(activity)
+        } else {
+            LiveUpdateMapPin.keepShown(activity, stationId, colorPalette)
+        }
+    }
+    DisposableEffect(activity) { onDispose { LiveUpdateMapPin.hide(activity) } }
 }
 
 private fun Context.findMainActivity(): MainActivity? {
@@ -206,7 +254,7 @@ private fun PermissionRequest(controller: LiveUpdateController) {
 @Composable
 private fun LiveUpdatePill(
     session: LiveUpdateSession,
-    onTrackedTripPage: Boolean,
+    showsPicker: Boolean,
     bottomPadding: Dp,
     onClick: () -> Unit,
 ) {
@@ -216,7 +264,7 @@ private fun LiveUpdatePill(
     val foreground = state?.routeTextColor?.let(::composeColor) ?: colorResource(R.color.fill3)
     val destination = state?.destinationStopName
     Pill(background, foreground, bottomPadding, onClick) {
-        if (onTrackedTripPage) {
+        if (showsPicker) {
             Text(
                 if (destination != null) {
                     stringResource(R.string.live_update_overlay_destination, destination)
