@@ -1,6 +1,8 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
 import com.mbta.tid.mbta_app.model.Route
+import com.mbta.tid.mbta_app.model.RoutePillSpec
+import com.mbta.tid.mbta_app.model.RouteType
 import com.mbta.tid.mbta_app.model.Trip
 import com.mbta.tid.mbta_app.model.TripDetailsStopList
 import com.mbta.tid.mbta_app.model.Vehicle
@@ -85,4 +87,16 @@ data class LiveUpdateState(
     val progressMax: Int,
     val boardingPosition: Int,
     val destinationPosition: Int?,
-)
+    /** The next stop the vehicle reaches while riding, or null while waiting or if unknown. */
+    val nextStopName: String? = null,
+    /** Whole-vehicle crowding while waiting. Null while riding or without data. */
+    val crowding: Vehicle.CrowdingLevel? = null,
+    /** The route badge for the notification large icon. */
+    val routePill: RoutePillSpec? = null,
+    /** Picks the mode icon of the progress bar marker. */
+    val routeType: RouteType? = null,
+) {
+    /** Stops left to ride, including the destination. Null unless riding with a known vehicle. */
+    val stopsLeft: Int?
+        get() = if (phase == LiveUpdatePhase.Riding) stopsAway?.plus(1) else null
+}

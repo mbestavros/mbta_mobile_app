@@ -1,6 +1,7 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
 import com.mbta.tid.mbta_app.model.Prediction
+import com.mbta.tid.mbta_app.model.RoutePillSpec
 import com.mbta.tid.mbta_app.model.RouteType
 import com.mbta.tid.mbta_app.model.TripDetailsStopList
 import com.mbta.tid.mbta_app.model.Vehicle
@@ -162,6 +163,23 @@ object LiveUpdateStateCalculator {
             if (vehicle == null) null
             else snapshot.stopList.stops.count { it.stopSequence < targetSequence }
 
+        val nextStopName =
+            if (riding && vehicle != null && current != null) {
+                val nextSequence =
+                    if (stoppedAt) anchor.sequences.firstOrNull { it > current }
+                    else anchor.sequences.firstOrNull { it >= current }
+                nextSequence?.let { anchor.stopNames[it] }
+            } else {
+                null
+            }
+        // Same rule as the trip header: per-car data replaces the whole-vehicle level.
+        val crowding =
+            if (phase == LiveUpdatePhase.Waiting) {
+                vehicle?.takeIf { !it.hasCarLevelCrowding }?.occupancyStatus?.crowdingLevel
+            } else {
+                null
+            }
+
         val boardingPosition = anchor.positionOf(boardingSequence)
         val destinationPosition = destinationSequence?.let { anchor.positionOf(it) }
         val progressMax = maxOf(destinationPosition ?: boardingPosition, 1)
@@ -189,6 +207,15 @@ object LiveUpdateStateCalculator {
             progressMax = progressMax,
             boardingPosition = boardingPosition,
             destinationPosition = destinationPosition,
+            nextStopName = nextStopName,
+            crowding = crowding,
+            routePill =
+                RoutePillSpec(
+                    snapshot.route,
+                    snapshot.global.getLine(snapshot.route.lineId),
+                    RoutePillSpec.Type.FlexCompact,
+                ),
+            routeType = snapshot.route.type,
         )
     }
 
