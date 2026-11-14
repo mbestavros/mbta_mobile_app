@@ -31,7 +31,21 @@ notification with a progress bar.
 - Without a destination, the Live Update ends when the vehicle leaves your stop. With a destination,
   it ends when the vehicle arrives there.
 - Use "Stop" in the notification, or "Stop tracking" in the list, to end it. If you swipe it
-  away, it ends.
+  away by accident, it comes back and tracking goes on.
+- A finished state (left the stop, trip ended, cancelled) must hold across two updates, and 20
+  seconds unless it's an arrival, before the Live Update ends. One glitchy vehicle update doesn't
+  end it.
+- If data stops (the socket dies while the phone sleeps, a tunnel, a quiet channel), the service
+  reconnects. It does this after 3 minutes of no data, when the network comes back, and when the
+  screen turns on with data older than 90 seconds. It ends with "Lost connection to this trip"
+  only after 45 minutes without data, or when data is stale 30 minutes after the trip's last
+  known time. It ends after 3 hours in any case.
+- The session is saved (`LiveUpdateStore`) and the service is sticky. If Android kills the
+  process, the service resumes the trip when it restarts. If Android won't let it start in the
+  foreground, a "Tap to resume tracking" notification resumes it.
+- `LiveUpdateDiagnostics` logs why each session ended or reconnected, and why the process died
+  (`ApplicationExitInfo`). Read it with `adb logcat -d -s LiveUpdate:*`, or on a debug build with
+  `adb shell run-as com.mbta.tid.mbta_app.staging cat shared_prefs/live_update_diagnostics.xml`.
 - The service posts the notification again only when its content changes. Each post also goes to
   connected watches.
 

@@ -25,7 +25,9 @@ object LiveUpdateNotification {
     const val CHANNEL_ID = "live_updates"
     const val ONGOING_ID = 4_001
     const val FINAL_ID = 4_002
+    const val RESUME_ID = 4_003
     private const val FINAL_TIMEOUT_MS = 60_000L
+    private const val RESUME_TIMEOUT_MS = 30 * 60_000L
 
     fun ensureChannel(context: Context) {
         val channel =
@@ -128,6 +130,30 @@ object LiveUpdateNotification {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setTimeoutAfter(FINAL_TIMEOUT_MS)
+            .build()
+
+    /**
+     * Shown when the system restarted the service after the process died, but didn't allow a
+     * foreground service from the background. Tapping it resumes the saved session. A tap on a
+     * notification may start a foreground service.
+     */
+    fun resume(context: Context): Notification =
+        NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.app_icon_monochrome)
+            .setContentTitle(context.getString(R.string.live_update_resume_title))
+            .setContentText(context.getString(R.string.live_update_resume_text))
+            .setContentIntent(
+                PendingIntent.getForegroundService(
+                    context,
+                    3,
+                    Intent(context, LiveUpdateService::class.java)
+                        .setAction(LiveUpdateService.ACTION_RESUME),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
+            )
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setTimeoutAfter(RESUME_TIMEOUT_MS)
             .build()
 
     private fun baseBuilder(context: Context): NotificationCompat.Builder =
