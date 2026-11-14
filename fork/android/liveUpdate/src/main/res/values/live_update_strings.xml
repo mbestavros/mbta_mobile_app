@@ -15,23 +15,26 @@
     <string name="live_update_text_clock_time">Arrives at %2$s at %1$s</string>
     <string name="live_update_text_unknown">Waiting for predictions for %1$s</string>
 
-    <!-- Notification title while waiting for the vehicle. -->
+    <!-- Notification title. Keep these short: the title is one line, and a long title hides the stop count. -->
     <string name="live_update_wait_boarding">Boarding now</string>
     <string name="live_update_wait_arriving">Arriving now</string>
-    <string name="live_update_wait_minutes">Arrives in %1$d min</string>
-    <string name="live_update_wait_clock_time">Arrives at %1$s</string>
+    <string name="live_update_short_minutes">%1$d min</string>
     <string name="live_update_wait_unknown">Waiting for predictions</string>
     <plurals name="live_update_stops_away">
         <item quantity="one">%1$d stop away</item>
         <item quantity="other">%1$d stops away</item>
     </plurals>
+    <!-- Riding title. Keep the destination (the stop name) last: it may be cut off, the numbers before it must not. -->
     <!-- Stops left to ride, including the destination. -->
-    <plurals name="live_update_stops_left">
-        <item quantity="one">%1$d stop</item>
-        <item quantity="other">%1$d stops</item>
+    <plurals name="live_update_stops_to">
+        <item quantity="one">%1$d stop to %2$s</item>
+        <item quantity="other">%1$d stops to %2$s</item>
     </plurals>
-    <string name="live_update_destination_next">next stop</string>
-    <string name="live_update_next_stop">Next stop: %1$s</string>
+    <string name="live_update_next_stop_to">Next stop: %1$s</string>
+    <!-- A time ("12 min" or "10:45 PM") and the destination. -->
+    <string name="live_update_time_to">%1$s to %2$s</string>
+    <!-- Second line while riding. -->
+    <string name="live_update_next">Next: %1$s</string>
     <string name="live_update_at_stop_eta">%1$s · ETA %2$s</string>
 
     <string name="live_update_sub_eta">ETA %1$s</string>
