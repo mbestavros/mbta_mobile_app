@@ -30,5 +30,12 @@ object LiveUpdateBootstrap {
         loadKoinModules(module { single { LiveUpdateController(application) } })
         LiveUpdateNotification.ensureChannel(application)
         application.registerActivityLifecycleCallbacks(LiveUpdateOverlayInstaller)
+        // Explain earlier process deaths: was tracking active when the system killed the app?
+        // The exit reasons come from a binder call, so read them off the main thread.
+        Thread {
+            LiveUpdateDiagnostics(application)
+                .recordProcessExits(sessionSaved = LiveUpdateStore(application).load() != null)
+        }
+            .start()
     }
 }

@@ -53,6 +53,12 @@
     <string name="live_update_finished_cancelled">Trip cancelled at %1$s</string>
     <string name="live_update_finished_already_passed">Already past %1$s</string>
     <string name="live_update_finished_no_data">No data for this trip</string>
+    <string name="live_update_finished_lost_connection">Lost connection to this trip</string>
+    <string name="live_update_finished_max_duration">Stopped tracking after 3 hours</string>
+
+    <!-- Shown when Android ended trip tracking in the background. -->
+    <string name="live_update_resume_title">Trip tracking paused</string>
+    <string name="live_update_resume_text">Tap to resume tracking</string>
 
     <string name="live_update_action_stop">Stop</string>
 
