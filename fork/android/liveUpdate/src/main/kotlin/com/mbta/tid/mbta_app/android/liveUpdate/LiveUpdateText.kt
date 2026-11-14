@@ -43,9 +43,9 @@ object LiveUpdateTextFormatter {
     /** The status chip shows its text in full only up to 7 characters. */
     const val MAX_CHIP_LENGTH = 7
 
-    /** While riding, the chip shows the stops left only below both of these limits. */
-    const val CHIP_STOPS_MAX = 9
-    const val CHIP_STOPS_MAX_MINUTES = 14
+    /** While riding, the chip shows the stops left only within both of these limits. */
+    const val CHIP_STOPS_MAX = 3
+    const val CHIP_STOPS_MAX_MINUTES = 9
 
     fun format(state: LiveUpdateState, strings: StringLookup): LiveUpdateText {
         val routeTitle = strings.string(R.string.live_update_title, state.routeName, state.headsign)
@@ -60,26 +60,15 @@ object LiveUpdateTextFormatter {
         }
     }
 
-    /** "Arrives in 4 min · 2 stops away", "Red Line to Ashmont · Not crowded", the ETA. */
+    /**
+     * "4 min · 2 stops away", "Red Line to Ashmont · Not crowded", the ETA. The title holds only
+     * the numbers, so a long stop name can't push the stop count out of the one-line title.
+     */
     private fun waitingText(
         state: LiveUpdateState,
         routeTitle: String,
         strings: StringLookup,
     ): LiveUpdateText {
-        val countdown =
-            when (val label = state.label) {
-                LiveUpdateLabel.Boarding -> strings.string(R.string.live_update_wait_boarding)
-                LiveUpdateLabel.Arriving -> strings.string(R.string.live_update_wait_arriving)
-                LiveUpdateLabel.Approaching -> strings.string(R.string.live_update_wait_minutes, 1)
-                is LiveUpdateLabel.Minutes ->
-                    strings.string(R.string.live_update_wait_minutes, label.minutes)
-                is LiveUpdateLabel.ClockTime ->
-                    strings.string(
-                        R.string.live_update_wait_clock_time,
-                        strings.clockTime(label.time),
-                    )
-                LiveUpdateLabel.Unknown -> strings.string(R.string.live_update_wait_unknown)
-            }
         val stopsAway =
             state.stopsAway?.takeIf {
                 it > 0 &&
@@ -87,13 +76,11 @@ object LiveUpdateTextFormatter {
                     state.label != LiveUpdateLabel.Arriving
             }
         val title =
-            listOfNotNull(
-                    countdown,
-                    stopsAway?.let {
-                        strings.plural(R.plurals.live_update_stops_away, it, it)
-                    },
-                )
-                .joinToString(SEPARATOR)
+            shortTitle(
+                shortTime(state.label, strings),
+                stopsAway?.let { strings.plural(R.plurals.live_update_stops_away, it, it) },
+                strings,
+            )
         val sub =
             listOfNotNull(routeTitle, state.crowding?.let { crowdingText(it, strings) })
                 .joinToString(SEPARATOR)
@@ -112,27 +99,61 @@ object LiveUpdateTextFormatter {
         return LiveUpdateText(title, text, chip(state, strings), sub)
     }
 
-    /** "6 min to Park Street · 3 stops", "Next stop: Downtown Crossing", the ETA. */
+    /**
+     * "12 min · 3 stops to Downtown Crossing", "Next: Park Street", the ETA. On the last leg: "2
+     * min · Next stop: Downtown Crossing" and no second line. The numbers come before the
+     * destination, so a long stop name can only cut off itself.
+     */
     private fun ridingText(state: LiveUpdateState, strings: StringLookup): LiveUpdateText {
-        val status = statusText(state, strings)
-        val stopsLeft = state.stopsLeft?.takeIf { state.label != LiveUpdateLabel.Arriving }
+        val destination = state.destinationStopName ?: state.targetStopName
+        val time = shortTime(state.label, strings)
+        val stopsLeft = state.stopsLeft
         val title =
             when {
-                stopsLeft == null -> status
+                state.label == LiveUpdateLabel.Arriving ->
+                    strings.string(R.string.live_update_text_arriving, destination)
                 stopsLeft == 1 ->
-                    status + SEPARATOR + strings.string(R.string.live_update_destination_next)
-                else ->
-                    status +
-                        SEPARATOR +
-                        strings.plural(R.plurals.live_update_stops_left, stopsLeft, stopsLeft)
+                    withTime(time, strings.string(R.string.live_update_next_stop_to, destination))
+                stopsLeft != null ->
+                    withTime(
+                        time,
+                        strings.plural(
+                            R.plurals.live_update_stops_to,
+                            stopsLeft,
+                            stopsLeft,
+                            destination,
+                        ),
+                    )
+                time != null -> strings.string(R.string.live_update_time_to, time, destination)
+                else -> strings.string(R.string.live_update_text_unknown, destination)
             }
         val sub =
             state.nextStopName
-                ?.takeIf { it != state.destinationStopName }
-                ?.let { strings.string(R.string.live_update_next_stop, it) }
+                ?.takeIf { it != destination }
+                ?.let { strings.string(R.string.live_update_next, it) }
         val text = subText(state, strings) ?: state.targetStopName
         return LiveUpdateText(title, text, chip(state, strings), sub)
     }
+
+    /** "4 min", "10:45 PM", "Boarding now", or null without a prediction. */
+    private fun shortTime(label: LiveUpdateLabel, strings: StringLookup): String? =
+        when (label) {
+            LiveUpdateLabel.Boarding -> strings.string(R.string.live_update_wait_boarding)
+            LiveUpdateLabel.Arriving -> strings.string(R.string.live_update_wait_arriving)
+            LiveUpdateLabel.Approaching -> strings.string(R.string.live_update_short_minutes, 1)
+            is LiveUpdateLabel.Minutes ->
+                strings.string(R.string.live_update_short_minutes, label.minutes)
+            is LiveUpdateLabel.ClockTime -> strings.clockTime(label.time)
+            LiveUpdateLabel.Unknown -> null
+        }
+
+    private fun withTime(time: String?, rest: String): String =
+        if (time == null) rest else time + SEPARATOR + rest
+
+    private fun shortTitle(time: String?, stops: String?, strings: StringLookup): String =
+        listOfNotNull(time, stops).joinToString(SEPARATOR).ifEmpty {
+            strings.string(R.string.live_update_wait_unknown)
+        }
 
     private fun crowdingText(level: Vehicle.CrowdingLevel, strings: StringLookup): String =
         strings.string(
@@ -198,7 +219,7 @@ object LiveUpdateTextFormatter {
 
     /**
      * While waiting, the countdown to the vehicle. While riding, the countdown to the destination,
-     * until fewer than 10 stops and less than 15 minutes are left. Then the stops left.
+     * until 3 or fewer stops and less than 10 minutes are left. Then the stops left.
      */
     fun chip(state: LiveUpdateState, strings: StringLookup): String? {
         val stopsLeft = state.stopsLeft
