@@ -35,16 +35,22 @@ notification with a progress bar.
 - A finished state (left the stop, trip ended, cancelled) must hold across two updates, and 20
   seconds unless it's an arrival, before the Live Update ends. One glitchy vehicle update doesn't
   end it.
-- If data stops (the socket dies while the phone sleeps, a tunnel, a quiet channel), the service
-  reconnects. It does this after 3 minutes of no data, when the network comes back, and when the
-  screen turns on with data older than 90 seconds. It ends with "Lost connection to this trip"
-  only after 45 minutes without data, or when data is stale 30 minutes after the trip's last
-  known time. It ends after 3 hours in any case.
+- The service judges the connection by socket frames, not trip data. A healthy socket gets a
+  heartbeat reply every 30 seconds, so a quiet channel (a trip that leaves in 20 minutes) is left
+  alone. A socket silent for 90 seconds (it died while the phone slept, or in a tunnel) is rebuilt.
+  The check runs every minute, and also at once when the network comes back and when the screen
+  turns on. While nothing gets through, rebuilds back off from 90 seconds up to 10 minutes. The
+  socket's own retries back off from 1 to 30 seconds, where upstream's retry every 2 seconds.
+- It ends with "Lost connection to this trip" only after 45 minutes without a frame, or when data
+  is stale 30 minutes after the trip's last known time. It ends after 3 hours in any case.
+- The destination map pin checks its layer every second only while MainActivity is started.
 - The session is saved (`LiveUpdateStore`) and the service is sticky. If Android kills the
   process, the service resumes the trip when it restarts. If Android won't let it start in the
   foreground, a "Tap to resume tracking" notification resumes it.
 - `LiveUpdateDiagnostics` logs why each session ended or reconnected, and why the process died
-  (`ApplicationExitInfo`). Read it with `adb logcat -d -s LiveUpdate:*`, or on a debug build with
+  (`ApplicationExitInfo`). Each `finish` entry also has the session's traffic counts
+  (`LiveUpdateStats`: minutes, socket frames, prediction and vehicle messages, reconnects,
+  notification posts). Use them to judge the radio cost. Read it with `adb logcat -d -s LiveUpdate:*`, or on a debug build with
   `adb shell run-as com.mbta.tid.mbta_app.staging cat shared_prefs/live_update_diagnostics.xml`.
 - The service posts the notification again only when its content changes. Each post also goes to
   connected watches.

@@ -25,6 +25,7 @@ import kotlinx.coroutines.isActive
  * is a copy of upstream's selected-pin layer for the destination, so it looks the same. It sits
  * below the puck anchor slot, above upstream's stop layers. A style reload (such as a dark mode
  * switch) removes custom layers, so [keepShown] checks the layer every second and adds it again.
+ * The caller runs it only while MainActivity is started, so it doesn't poll in the background.
  */
 internal object LiveUpdateMapPin {
     private const val TAG = "LiveUpdate"
@@ -52,10 +53,17 @@ internal object LiveUpdateMapPin {
     suspend fun keepShown(activity: Activity, stationId: String, colorPalette: ColorPalette) {
         val layer = pinLayer(stationId, colorPalette)?.toMapbox() ?: return
         var warned = false
+        // Walking the view tree every second is wasteful. Search again only if the view is gone.
+        var mapView = findMapView(activity.window.decorView)
         // Replace a layer left by a previous station or color palette.
-        findMap(activity)?.let { if (it.styleLayerExists(LAYER_ID)) it.removeStyleLayer(LAYER_ID) }
+        mapView?.mapboxMap?.let {
+            if (it.styleLayerExists(LAYER_ID)) it.removeStyleLayer(LAYER_ID)
+        }
         while (coroutineContext.isActive) {
-            val map = findMap(activity)
+            if (mapView?.isAttachedToWindow != true) {
+                mapView = findMapView(activity.window.decorView)
+            }
+            val map = mapView?.mapboxMap
             if (map == null) {
                 if (!warned) Log.w(TAG, "No MapView for the destination pin")
                 warned = true

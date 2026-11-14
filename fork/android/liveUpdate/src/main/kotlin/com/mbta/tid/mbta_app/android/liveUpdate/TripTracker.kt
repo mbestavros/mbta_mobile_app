@@ -39,6 +39,7 @@ class TripTracker(
     private val connection: LiveUpdateConnection,
     private val tripRepository: ITripRepository,
     private val globalRepository: IGlobalRepository,
+    private val stats: LiveUpdateStats? = null,
 ) {
     private val errorKey = ErrorKey(emptySet(), "LiveUpdate")
 
@@ -106,7 +107,10 @@ class TripTracker(
             fun connect() {
                 connection.tripPredictions.connect(tripId, errorKey) { result ->
                     when (result) {
-                        is ApiResult.Ok -> trySend(result.data)
+                        is ApiResult.Ok -> {
+                            stats?.predictionMessages?.incrementAndGet()
+                            trySend(result.data)
+                        }
                         is ApiResult.Error -> reconnector.onError("Trip predictions", result)
                     }
                 }
@@ -121,7 +125,10 @@ class TripTracker(
         fun connect() {
             connection.vehicle.connect(vehicleId, errorKey) { result ->
                 when (result) {
-                    is ApiResult.Ok -> trySend(result.data.vehicle)
+                    is ApiResult.Ok -> {
+                        stats?.vehicleMessages?.incrementAndGet()
+                        trySend(result.data.vehicle)
+                    }
                     is ApiResult.Error -> reconnector.onError("Vehicle", result)
                 }
             }

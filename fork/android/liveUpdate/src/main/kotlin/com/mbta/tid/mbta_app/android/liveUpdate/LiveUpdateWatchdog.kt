@@ -6,12 +6,16 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Decides what to do when trip data stops arriving.
+ * Decides whether the tracking connection is dead, and whether tracking should end.
  *
- * A quiet channel is normal: predictions for a trip that leaves in 20 minutes may not change for a
- * long time. A dead socket looks the same. The phone sleeps with the screen off, Phoenix heartbeats
- * stop, and the server closes the socket. So a stale session reconnects, which also brings fresh
- * data on join. It ends only when the trip should clearly be over.
+ * Liveness comes from socket frames, not trip data. A quiet channel is normal: predictions for a
+ * trip that leaves in 20 minutes may not change for a long time. But a healthy Phoenix socket gets
+ * a heartbeat reply every 30 seconds. So a socket that has been silent for [FRAME_STALE_AFTER] is
+ * dead (for example, the server closed it while the phone slept), and the service rebuilds it. A
+ * quiet but live socket is left alone, which keeps the radio idle.
+ *
+ * While the network is down, rebuilds back off from [FRAME_STALE_AFTER] up to
+ * [MAX_RECONNECT_INTERVAL]. The service also checks at once when the network comes back.
  */
 object LiveUpdateWatchdog {
     enum class Action {
@@ -19,7 +23,7 @@ object LiveUpdateWatchdog {
         Reconnect,
         /** No data at all since the user started tracking. */
         FinishNoData,
-        /** Data stopped, reconnects didn't help, and the trip should be over. */
+        /** The connection or the data stopped, and the trip should be over. */
         FinishLostConnection,
         FinishMaxDuration,
     }
@@ -33,7 +37,11 @@ object LiveUpdateWatchdog {
         val sinceStart: Duration,
         /** Since the last snapshot, or null if none arrived in this service instance. */
         val sinceLastData: Duration?,
+        /** Since the last socket frame of any kind, on any connection of this session. */
+        val sinceLastFrame: Duration?,
         val sinceLastConnect: Duration,
+        /** Rebuilds since the last socket frame. Each one doubles the wait before the next. */
+        val reconnectsSinceFrame: Int,
         val totalDuration: Duration,
         /** How long ago the last known arrival or departure time was. Negative if it's ahead. */
         val pastTarget: Duration?,
@@ -43,30 +51,39 @@ object LiveUpdateWatchdog {
 
     val CHECK_INTERVAL = 1.minutes
     val FIRST_DATA_TIMEOUT = 2.minutes
-    val STALE_AFTER = 3.minutes
-    /** A shorter limit when the screen turns on, so the notification is fresh when seen. */
-    val STALE_AFTER_ON_WAKE = 90.seconds
-    val MIN_RECONNECT_INTERVAL = 30.seconds
+    /** Three missed Phoenix heartbeats (30 s each). */
+    val FRAME_STALE_AFTER = 90.seconds
+    val MAX_RECONNECT_INTERVAL = 10.minutes
+    /** Data this old, long after the trip's last known time, means the trip is over. */
+    val DATA_STALE_AFTER = 3.minutes
     val PAST_TARGET_GRACE = 30.minutes
     val LOST_TIMEOUT = 45.minutes
     val MAX_DURATION = 3.hours
 
-    fun decide(input: Input, staleAfter: Duration = STALE_AFTER): Action {
+    fun decide(input: Input): Action {
         if (input.totalDuration > MAX_DURATION) return Action.FinishMaxDuration
         if (
             input.sinceLastData == null && !input.restored && input.sinceStart > FIRST_DATA_TIMEOUT
         ) {
             return Action.FinishNoData
         }
-        val quiet = input.sinceLastData ?: input.sinceStart
+        val silent = input.sinceLastFrame ?: input.sinceStart
+        val dataAge = input.sinceLastData ?: input.sinceStart
         val pastTarget = input.pastTarget ?: Duration.ZERO
         return when {
-            quiet > LOST_TIMEOUT -> Action.FinishLostConnection
-            quiet > STALE_AFTER && pastTarget > PAST_TARGET_GRACE -> Action.FinishLostConnection
-            quiet > staleAfter &&
-                input.sinceLastConnect > maxOf(MIN_RECONNECT_INTERVAL, staleAfter) ->
+            silent > LOST_TIMEOUT -> Action.FinishLostConnection
+            dataAge > DATA_STALE_AFTER && pastTarget > PAST_TARGET_GRACE ->
+                Action.FinishLostConnection
+            silent > FRAME_STALE_AFTER &&
+                input.sinceLastConnect > reconnectInterval(input.reconnectsSinceFrame) ->
                 Action.Reconnect
             else -> Action.None
         }
+    }
+
+    /** 90 s, 3 min, 6 min, then 10 min between rebuilds while no frame arrives. */
+    internal fun reconnectInterval(reconnectsSinceFrame: Int): Duration {
+        val doublings = reconnectsSinceFrame.coerceIn(0, 3)
+        return (FRAME_STALE_AFTER * (1 shl doublings)).coerceAtMost(MAX_RECONNECT_INTERVAL)
     }
 }

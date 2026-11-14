@@ -43,8 +43,9 @@ import org.koin.core.context.GlobalContext
  * background. It uses its own websocket (see [LiveUpdateConnection]).
  *
  * It is built to survive real use:
- * - A stale connection reconnects instead of ending tracking (see [LiveUpdateWatchdog]). It also
- *   reconnects when the network comes back and when the screen turns on with stale data.
+ * - A dead socket reconnects instead of ending tracking (see [LiveUpdateWatchdog]). It also checks
+ *   when the network comes back and when the screen turns on. A quiet but live socket is left
+ *   alone, so the radio can stay idle.
  * - Swiping the notification away doesn't stop tracking. Only the Stop action does.
  * - The session is saved ([LiveUpdateStore]) and the service is sticky, so it resumes after the
  *   system kills the process.
@@ -69,6 +70,10 @@ class LiveUpdateService : Service() {
     private var sessionStartElapsed = 0L
     private var lastDataElapsed: Long? = null
     private var lastConnectElapsed = 0L
+    // Written from socket threads.
+    @Volatile private var lastFrameElapsed: Long? = null
+    @Volatile private var reconnectsSinceFrame = 0
+    private var stats = LiveUpdateStats()
     private var lastTargetTime: EasternTimeInstant? = null
     private var lastPosted: LiveUpdateNotification.OngoingContent? = null
     private var lastNotification: Notification? = null
@@ -201,6 +206,9 @@ class LiveUpdateService : Service() {
         restored = isRestore
         sessionStartElapsed = SystemClock.elapsedRealtime()
         lastDataElapsed = null
+        lastFrameElapsed = null
+        reconnectsSinceFrame = 0
+        stats = LiveUpdateStats()
         lastTargetTime = null
         lastPosted = null
         lastNotification = null
@@ -214,7 +222,7 @@ class LiveUpdateService : Service() {
         watchdogJob = scope.launch {
             while (true) {
                 delay(LiveUpdateWatchdog.CHECK_INTERVAL)
-                checkWatchdog(LiveUpdateWatchdog.STALE_AFTER)
+                checkWatchdog()
             }
         }
     }
@@ -229,16 +237,26 @@ class LiveUpdateService : Service() {
         }
         dataJob?.cancel()
         connection?.close()
-        val newConnection = LiveUpdateConnection.create(this, koin).also { it.open() }
+        val sessionStats = stats
+        val newConnection =
+            LiveUpdateConnection.create(this, koin) {
+                    lastFrameElapsed = SystemClock.elapsedRealtime()
+                    reconnectsSinceFrame = 0
+                    sessionStats.frames.incrementAndGet()
+                }
+                .also { it.open() }
         connection = newConnection
         lastConnectElapsed = SystemClock.elapsedRealtime()
         if (reason != null) {
+            reconnectsSinceFrame++
+            stats.reconnects.incrementAndGet()
             diagnostics.record(
                 "reconnect reason=$reason trip=${currentRequest.tripId} " +
+                    "sinceFrame=${sinceLastFrame()?.inWholeSeconds}s " +
                     "sinceData=${sinceLastData()?.inWholeSeconds}s",
             )
         }
-        val tracker = TripTracker(newConnection, koin.get(), koin.get())
+        val tracker = TripTracker(newConnection, koin.get(), koin.get(), stats)
         dataJob = scope.launch { collectSnapshots(tracker, currentRequest) }
     }
 
@@ -316,24 +334,27 @@ class LiveUpdateService : Service() {
                     val notification =
                         LiveUpdateNotification.ongoing(this, state, text, deepLinkPath)
                     lastNotification = notification
+                    stats.posts.incrementAndGet()
                     post(LiveUpdateNotification.ONGOING_ID, notification)
                 }
             }
     }
 
-    private fun checkWatchdog(staleAfter: Duration) {
+    private fun checkWatchdog() {
         if (request.value == null) return
         val now = SystemClock.elapsedRealtime()
         val input =
             LiveUpdateWatchdog.Input(
                 sinceStart = (now - sessionStartElapsed).milliseconds,
                 sinceLastData = sinceLastData(),
+                sinceLastFrame = sinceLastFrame(),
                 sinceLastConnect = (now - lastConnectElapsed).milliseconds,
+                reconnectsSinceFrame = reconnectsSinceFrame,
                 totalDuration = (System.currentTimeMillis() - startedAtMs).milliseconds,
                 pastTarget = lastTargetTime?.let { EasternTimeInstant.now() - it },
                 restored = restored,
             )
-        when (LiveUpdateWatchdog.decide(input, staleAfter)) {
+        when (LiveUpdateWatchdog.decide(input)) {
             LiveUpdateWatchdog.Action.None -> Unit
             LiveUpdateWatchdog.Action.Reconnect -> connect("stale")
             LiveUpdateWatchdog.Action.FinishNoData ->
@@ -352,6 +373,10 @@ class LiveUpdateService : Service() {
         (SystemClock.elapsedRealtime() - it).milliseconds
     }
 
+    private fun sinceLastFrame(): Duration? = lastFrameElapsed?.let {
+        (SystemClock.elapsedRealtime() - it).milliseconds
+    }
+
     private fun plainText(textId: Int) =
         LiveUpdateText(
             strings.string(R.string.live_update_placeholder_title),
@@ -360,9 +385,11 @@ class LiveUpdateService : Service() {
         )
 
     /**
-     * Reconnects when the network comes back or changes, and checks for stale data when the screen
-     * turns on. While the phone sleeps, Phoenix heartbeats stop and the server can close the
-     * socket. The socket's own reconnect timers also stop, so this gets data flowing sooner.
+     * Runs the watchdog at once when the network comes back or changes, and when the screen turns
+     * on, instead of waiting for the next minute check. While the phone sleeps, Phoenix heartbeats
+     * stop and the server can close the socket, and the socket's own reconnect timers stop too. The
+     * watchdog rebuilds only a socket that has gone silent. A socket that Phoenix already
+     * reconnected by itself is left alone.
      */
     private fun registerWakeSignals() {
         val connectivity = getSystemService(ConnectivityManager::class.java)
@@ -376,11 +403,7 @@ class LiveUpdateService : Service() {
                         val changed = lost || (current != null && current != network)
                         current = network
                         lost = false
-                        if (changed) {
-                            scope.launch {
-                                if (request.value != null) connect("network_available")
-                            }
-                        }
+                        if (changed) scope.launch { checkWatchdog() }
                     }
 
                     override fun onLost(network: Network) {
@@ -401,7 +424,7 @@ class LiveUpdateService : Service() {
         val receiver =
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    checkWatchdog(LiveUpdateWatchdog.STALE_AFTER_ON_WAKE)
+                    checkWatchdog()
                 }
             }
         ContextCompat.registerReceiver(
@@ -481,9 +504,11 @@ class LiveUpdateService : Service() {
      * [reason] goes to [LiveUpdateDiagnostics].
      */
     private fun finish(finalText: LiveUpdateText?, reason: String) {
+        val minutes = (SystemClock.elapsedRealtime() - sessionStartElapsed) / 60_000
         diagnostics.record(
             "finish reason=$reason trip=${request.value?.tripId} " +
-                "sinceData=${sinceLastData()?.inWholeSeconds}s restored=$restored",
+                "sinceData=${sinceLastData()?.inWholeSeconds}s restored=$restored " +
+                stats.summary(minutes),
         )
         stopTracking()
         request.value = null
