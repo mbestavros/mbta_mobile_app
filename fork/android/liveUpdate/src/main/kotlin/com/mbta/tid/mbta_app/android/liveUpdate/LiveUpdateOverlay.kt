@@ -54,6 +54,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.mbta.tid.mbta_app.android.MainActivity
@@ -212,16 +215,25 @@ private fun returnToTrip(
     }
 }
 
-/** Pins [stationId] on the map while it is not null. See [LiveUpdateMapPin]. */
+/**
+ * Pins [stationId] on the map while it is not null. See [LiveUpdateMapPin].
+ *
+ * The composition stays alive when MainActivity is stopped, so a plain LaunchedEffect would keep
+ * the pin's one-second check running for the whole ride with the phone locked. Run it only while
+ * the activity is started.
+ */
 @Composable
 private fun DestinationMapPin(stationId: String?) {
     val activity = LocalContext.current.findMainActivity() ?: return
+    val lifecycleOwner = LocalLifecycleOwner.current
     val colorPalette = if (isSystemInDarkTheme()) ColorPalette.dark else ColorPalette.light
-    LaunchedEffect(stationId, colorPalette) {
+    LaunchedEffect(stationId, colorPalette, lifecycleOwner) {
         if (stationId == null) {
             LiveUpdateMapPin.hide(activity)
         } else {
-            LiveUpdateMapPin.keepShown(activity, stationId, colorPalette)
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                LiveUpdateMapPin.keepShown(activity, stationId, colorPalette)
+            }
         }
     }
     DisposableEffect(activity) { onDispose { LiveUpdateMapPin.hide(activity) } }

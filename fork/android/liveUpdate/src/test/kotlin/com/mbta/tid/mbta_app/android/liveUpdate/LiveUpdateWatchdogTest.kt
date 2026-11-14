@@ -12,7 +12,9 @@ class LiveUpdateWatchdogTest {
     private fun input(
         sinceStart: Duration = 30.minutes,
         sinceLastData: Duration? = 10.seconds,
+        sinceLastFrame: Duration? = 10.seconds,
         sinceLastConnect: Duration = 30.minutes,
+        reconnectsSinceFrame: Int = 0,
         totalDuration: Duration = 30.minutes,
         pastTarget: Duration? = (-10).minutes,
         restored: Boolean = false,
@@ -20,7 +22,9 @@ class LiveUpdateWatchdogTest {
         LiveUpdateWatchdog.Input(
             sinceStart,
             sinceLastData,
+            sinceLastFrame,
             sinceLastConnect,
+            reconnectsSinceFrame,
             totalDuration,
             pastTarget,
             restored,
@@ -32,9 +36,23 @@ class LiveUpdateWatchdogTest {
     }
 
     @Test
-    fun `a quiet channel reconnects instead of finishing`() {
-        // The old watchdog stopped silently after 10 minutes without data.
-        assertEquals(Action.Reconnect, LiveUpdateWatchdog.decide(input(sinceLastData = 12.minutes)))
+    fun `a quiet channel on a live socket does nothing`() {
+        // Heartbeat replies keep coming, so the socket is fine. Rebuilding it would only wake the
+        // radio and repeat the trip and schedule requests.
+        assertEquals(
+            Action.None,
+            LiveUpdateWatchdog.decide(
+                input(sinceLastData = 25.minutes, sinceLastFrame = 20.seconds),
+            ),
+        )
+    }
+
+    @Test
+    fun `a silent socket reconnects`() {
+        assertEquals(
+            Action.Reconnect,
+            LiveUpdateWatchdog.decide(input(sinceLastData = 2.minutes, sinceLastFrame = 2.minutes)),
+        )
     }
 
     @Test
@@ -42,19 +60,26 @@ class LiveUpdateWatchdogTest {
         assertEquals(
             Action.None,
             LiveUpdateWatchdog.decide(
-                input(sinceLastData = 12.minutes, sinceLastConnect = 1.minutes),
+                input(sinceLastFrame = 5.minutes, sinceLastConnect = 1.minutes),
             ),
         )
     }
 
     @Test
-    fun `screen on uses the shorter stale limit`() {
-        val stale = input(sinceLastData = 2.minutes, sinceLastConnect = 2.minutes)
-        assertEquals(Action.None, LiveUpdateWatchdog.decide(stale))
+    fun `reconnects back off while no frame arrives`() {
+        val offline =
+            input(
+                sinceLastFrame = 20.minutes,
+                sinceLastData = 20.minutes,
+                sinceLastConnect = 4.minutes,
+            )
+        // After one failed rebuild the wait is 3 min, after two it is 6 min.
         assertEquals(
             Action.Reconnect,
-            LiveUpdateWatchdog.decide(stale, LiveUpdateWatchdog.STALE_AFTER_ON_WAKE),
+            LiveUpdateWatchdog.decide(offline.copy(reconnectsSinceFrame = 1)),
         )
+        assertEquals(Action.None, LiveUpdateWatchdog.decide(offline.copy(reconnectsSinceFrame = 2)))
+        assertEquals(10.minutes, LiveUpdateWatchdog.reconnectInterval(10))
     }
 
     @Test
@@ -66,11 +91,17 @@ class LiveUpdateWatchdogTest {
     }
 
     @Test
-    fun `a restored session without data reconnects instead`() {
+    fun `a restored session without frames reconnects instead`() {
         assertEquals(
             Action.Reconnect,
             LiveUpdateWatchdog.decide(
-                input(sinceStart = 4.minutes, sinceLastData = null, restored = true),
+                input(
+                    sinceStart = 4.minutes,
+                    sinceLastData = null,
+                    sinceLastFrame = null,
+                    sinceLastConnect = 4.minutes,
+                    restored = true,
+                ),
             ),
         )
     }
@@ -84,10 +115,12 @@ class LiveUpdateWatchdogTest {
     }
 
     @Test
-    fun `no data for a very long time finishes`() {
+    fun `a socket silent for a very long time finishes`() {
         assertEquals(
             Action.FinishLostConnection,
-            LiveUpdateWatchdog.decide(input(sinceLastData = 50.minutes, pastTarget = null)),
+            LiveUpdateWatchdog.decide(
+                input(sinceLastFrame = 50.minutes, sinceLastData = 50.minutes, pastTarget = null),
+            ),
         )
     }
 
