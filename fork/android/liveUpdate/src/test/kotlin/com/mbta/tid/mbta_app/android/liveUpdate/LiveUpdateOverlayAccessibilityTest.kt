@@ -12,6 +12,8 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -85,6 +87,55 @@ class LiveUpdateOverlayAccessibilityTest {
             .assertIsEnabled()
             .performClick()
         assertEquals(1, clicks)
+    }
+
+    private val red = LiveUpdateFixtures().route
+
+    private fun setPill(starting: Boolean, onClick: () -> Unit = {}) {
+        compose.setContent {
+            MyApplicationTheme {
+                LiveUpdatePill(
+                    PillContent(
+                        PillKind.Return,
+                        PillRoute(red, null),
+                        starting = starting,
+                        title = string(R.string.live_update_overlay_return),
+                        subtitle = "5 min",
+                    ),
+                    bottomPadding = 16.dp,
+                    onClick = onClick,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun routePillNamesTheRouteWithItsBadge() {
+        var clicks = 0
+        setPill(starting = false) { clicks++ }
+
+        compose
+            .onNodeWithText(string(R.string.live_update_overlay_return))
+            .assert(hasRole(Role.Button))
+            .assert(hasContentDescription("Red Line", substring = true))
+            .assert(hasText("5 min"))
+            .assertHasClickAction()
+            .assertIsEnabled()
+            .performClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun startingPillSaysSoInsteadOfTheBadge() {
+        compose.mainClock.autoAdvance = false
+        setPill(starting = true)
+        compose.mainClock.advanceTimeBy(1_000)
+
+        compose
+            .onNodeWithText(string(R.string.live_update_overlay_return))
+            .assert(hasRole(Role.Button))
+            .assert(hasContentDescription(string(R.string.live_update_overlay_starting)))
+            .assertHasClickAction()
     }
 
     @Test

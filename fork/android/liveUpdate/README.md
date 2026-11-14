@@ -25,6 +25,10 @@ notification with a progress bar.
     map fits the vehicle and the destination and upstream pins the destination.
 - If you open the tracked trip's page yourself (it targets the boarding station), the map also
   pins the destination station. The pin stays while you move the map.
+- The pill has the route colors and the route badge on its left, like the notification. It waits
+  until the route is known, then slides in, so it never flashes the default blue first. Right
+  after "Track this trip", a spinner replaces the badge until the first trip data arrives.
+  Color, text and size changes animate.
 - "Track this trip" shows only after the trip data loads. Some trips show "not available" on
   the trip page because the app can't load them. These trips can't be tracked. If no trip
   data comes in 2 minutes, the Live Update ends with "No data for this trip".

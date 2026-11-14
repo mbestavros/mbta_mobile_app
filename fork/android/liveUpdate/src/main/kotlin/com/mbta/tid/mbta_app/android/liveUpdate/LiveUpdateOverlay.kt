@@ -8,10 +8,28 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +44,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,11 +55,13 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +71,8 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -61,11 +84,14 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.mbta.tid.mbta_app.android.MainActivity
 import com.mbta.tid.mbta_app.android.R
+import com.mbta.tid.mbta_app.android.component.RoutePill
+import com.mbta.tid.mbta_app.android.component.RoutePillType
 import com.mbta.tid.mbta_app.android.util.Typography
 import com.mbta.tid.mbta_app.android.util.formattedTime
 import com.mbta.tid.mbta_app.android.util.modifiers.haloContainer
 import com.mbta.tid.mbta_app.android.util.notificationPermissionState
 import com.mbta.tid.mbta_app.map.ColorPalette
+import com.mbta.tid.mbta_app.repositories.IGlobalRepository
 import com.mbta.tid.mbta_app.viewModel.IMapViewModel
 import com.mbta.tid.mbta_app.viewModel.IStopDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.ITripDetailsViewModel
@@ -90,8 +116,10 @@ fun LiveUpdateOverlay(
     mapViewModel: IMapViewModel = koinInject(),
     tripDetailsViewModel: ITripDetailsViewModel = koinInject(),
     stopDetailsViewModel: IStopDetailsViewModel = koinInject(),
+    globalRepository: IGlobalRepository = koinInject(),
 ) {
     val session by controller.session.collectAsState()
+    val repositoryGlobal by globalRepository.state.collectAsState()
     val pendingPermission by controller.pendingPermission.collectAsState()
     val mapState by mapViewModel.models.collectAsState()
     val tripState by tripDetailsViewModel.models.collectAsState()
@@ -101,44 +129,33 @@ fun LiveUpdateOverlay(
 
     if (pendingPermission != null) PermissionRequest(controller)
 
-    val current = session
     val tripPageOpen = TripPage.isOpen(mapState, tripState)
     val pageFilter = TripPage.trackableFilter(tripPageOpen, tripState)
-    if (pageFilter != null && pageFilter.tripId != current?.request?.tripId) {
-        Pill(
-            colorResource(R.color.key),
-            colorResource(R.color.fill3),
-            bottomPadding = 16.dp,
-            onClick = { controller.track(pageFilter) },
-        ) {
-            Text(
-                stringResource(R.string.live_update_overlay_track),
-                style = Typography.calloutSemibold,
-                maxLines = 1,
-            )
-        }
-        return
-    }
-    if (current == null) return
+    // An untracked trip page offers "Track this trip", even while another trip is tracked.
+    val trackFilter = pageFilter?.takeIf { it.tripId != session?.request?.tripId }
+    val current = session.takeIf { trackFilter == null }
     val onTrackedTripPage =
-        tripPageOpen && tripState.tripData?.tripFilter?.tripId == current.request.tripId
-    val global = current.snapshot?.global
+        current != null &&
+            tripPageOpen &&
+            tripState.tripData?.tripFilter?.tripId == current.request.tripId
+    val global = current?.snapshot?.global
     val onStationPage =
-        StationPage.isOpen(
-            StationPage.isStopDetails(mapState, tripState),
-            stopDetailsState,
-            StationPage.trackedStationIds(current.request, global),
-            global,
-        )
+        current != null &&
+            StationPage.isOpen(
+                StationPage.isStopDetails(mapState, tripState),
+                stopDetailsState,
+                StationPage.trackedStationIds(current.request, global),
+                global,
+            )
     // Aboard, the trip page is the only page that matters, so the station page offers the way back.
-    val riding = current.state?.phase is LiveUpdatePhase.Riding
+    val riding = current?.state?.phase is LiveUpdatePhase.Riding
     val showsPicker = onTrackedTripPage || (onStationPage && !riding)
     val onEntryScreen = mapState.layerState is MapViewModel.LayerState.Overview
 
     // Upstream pins the trip page's target stop. A trip page opened from the notification targets
     // the destination already, so only pin it when the target is another stop.
     val destinationStationId =
-        current.request.destinationStopId?.let { LiveUpdateDeepLink.stationId(it, global) }
+        current?.request?.destinationStopId?.let { LiveUpdateDeepLink.stationId(it, global) }
     val pageTargetStationId =
         tripState.tripData?.tripFilter?.stopId?.let { LiveUpdateDeepLink.stationId(it, global) }
     DestinationMapPin(
@@ -148,19 +165,42 @@ fun LiveUpdateOverlay(
     var sheetOpen by remember { mutableStateOf(false) }
     LaunchedEffect(showsPicker) { if (!showsPicker) sheetOpen = false }
 
-    LiveUpdatePill(
-        current,
-        showsPicker = showsPicker,
+    // One pill for every state, so it animates from one state to the next instead of popping.
+    val pillContent =
+        when {
+            trackFilter != null ->
+                LiveUpdatePillModel.trackRoute(tripState.tripData, repositoryGlobal)?.let {
+                    PillContent(
+                        PillKind.Track,
+                        it,
+                        starting = false,
+                        title = stringResource(R.string.live_update_overlay_track),
+                        subtitle = null,
+                    )
+                }
+            current != null ->
+                LiveUpdatePillModel.trackedRoute(current, repositoryGlobal)?.let {
+                    trackedPillContent(current, it, showsPicker, context)
+                }
+            else -> null
+        }
+    AnimatedLiveUpdatePill(
+        pillContent,
         bottomPadding = if (onEntryScreen) TAB_BAR_HEIGHT + 12.dp else 16.dp,
     ) {
-        if (showsPicker) {
-            sheetOpen = true
-        } else {
-            val activity = context.findMainActivity() ?: return@LiveUpdatePill
-            returnToTrip(activity, current, scope, mayBeOnMorePage = onEntryScreen)
+        when {
+            trackFilter != null -> controller.track(trackFilter)
+            current == null -> Unit
+            showsPicker -> {
+                sheetOpen = true
+            }
+            else -> {
+                val activity = context.findMainActivity() ?: return@AnimatedLiveUpdatePill
+                returnToTrip(activity, current, scope, mayBeOnMorePage = onEntryScreen)
+            }
         }
     }
-    if (sheetOpen) {
+    if (sheetOpen && current != null) {
         DestinationSheet(
             current,
             onDismiss = { sheetOpen = false },
@@ -263,46 +303,162 @@ private fun PermissionRequest(controller: LiveUpdateController) {
     }
 }
 
+/** What the pill shows. A new [title] crossfades; [subtitle] updates in place. */
+internal data class PillContent(
+    val kind: PillKind,
+    val route: PillRoute,
+    /** True until the tracker computes its first state. The badge shows a spinner meanwhile. */
+    val starting: Boolean,
+    val title: String,
+    val subtitle: String?,
+)
+
 @Composable
-private fun LiveUpdatePill(
+private fun trackedPillContent(
     session: LiveUpdateSession,
+    route: PillRoute,
     showsPicker: Boolean,
-    bottomPadding: Dp,
-    onClick: () -> Unit,
-) {
-    val context = LocalContext.current
+    context: Context,
+): PillContent {
     val state = session.state
-    val background = state?.routeColor?.let(::composeColor) ?: colorResource(R.color.key)
-    val foreground = state?.routeTextColor?.let(::composeColor) ?: colorResource(R.color.fill3)
-    val destination = state?.destinationStopName
-    Pill(background, foreground, bottomPadding, onClick) {
-        if (showsPicker) {
-            Text(
+    val starting = LiveUpdatePillModel.isStarting(session)
+    if (showsPicker) {
+        val destination = state?.destinationStopName
+        return PillContent(
+            PillKind.Picker,
+            route,
+            starting,
+            title =
                 if (destination != null) {
                     stringResource(R.string.live_update_overlay_destination, destination)
                 } else {
                     stringResource(R.string.live_update_overlay_choose_destination)
                 },
+            subtitle = null,
+        )
+    }
+    return PillContent(
+        PillKind.Return,
+        route,
+        starting,
+        title = stringResource(R.string.live_update_overlay_return),
+        subtitle =
+            state?.let { LiveUpdateTextFormatter.statusText(it, ContextStringLookup(context)) },
+    )
+}
+
+private const val COLOR_ANIMATION_MS = 300
+
+/**
+ * Slides the pill in once [content] is ready, and out when it turns null. The pill keeps its last
+ * content while it slides out, and does not take taps then.
+ */
+@Composable
+private fun AnimatedLiveUpdatePill(content: PillContent?, bottomPadding: Dp, onClick: () -> Unit) {
+    var lastContent by remember { mutableStateOf(content) }
+    if (content != null) SideEffect { lastContent = content }
+    val visible = remember { MutableTransitionState(false) }
+    visible.targetState = content != null
+    val padding by animateDpAsState(bottomPadding, label = "pillPadding")
+    val currentOnClick by rememberUpdatedState(onClick)
+    AnimatedVisibility(
+        visibleState = visible,
+        enter = slideInVertically { it } + fadeIn(),
+        exit = slideOutVertically { it } + fadeOut(),
+    ) {
+        val shown = content ?: lastContent ?: return@AnimatedVisibility
+        LiveUpdatePill(shown, padding, enabled = content != null) { currentOnClick() }
+    }
+}
+
+/** The pill in the route colors, with the route badge on the left. */
+@Composable
+internal fun LiveUpdatePill(
+    content: PillContent,
+    bottomPadding: Dp,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val route = content.route.route
+    val background by
+        animateColorAsState(
+            composeColor(route.color) ?: colorResource(R.color.key),
+            tween(COLOR_ANIMATION_MS),
+            label = "pillBackground",
+        )
+    val foreground by
+        animateColorAsState(
+            composeColor(route.textColor) ?: colorResource(R.color.fill3),
+            tween(COLOR_ANIMATION_MS),
+            label = "pillForeground",
+        )
+    var lastSubtitle by remember { mutableStateOf(content.subtitle) }
+    content.subtitle?.let { SideEffect { lastSubtitle = it } }
+
+    Pill(
+        background,
+        foreground,
+        bottomPadding,
+        onClick,
+        enabled = enabled,
+        badge = { PillBadge(content, foreground) },
+    ) {
+        // The pill animates its own size, so the title only fades.
+        AnimatedContent(
+            content.title,
+            transitionSpec = {
+                (fadeIn(tween(220, delayMillis = 90)) togetherWith fadeOut(tween(90))).using(null)
+            },
+            label = "pillTitle",
+        ) { title ->
+            Text(
+                title,
                 style = Typography.calloutSemibold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        } else {
+        }
+        AnimatedVisibility(
+            visible = content.subtitle != null,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
             Text(
-                stringResource(R.string.live_update_overlay_return),
-                style = Typography.calloutSemibold,
+                content.subtitle ?: lastSubtitle.orEmpty(),
+                style = Typography.footnote,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (state != null) {
-                Text(
-                    stringResource(
-                        R.string.live_update_overlay_status,
-                        state.routeName,
-                        LiveUpdateTextFormatter.statusText(state, ContextStringLookup(context)),
-                    ),
-                    style = Typography.footnote,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        }
+    }
+}
+
+/**
+ * The route badge, or a spinner while tracking starts. The badge has the pill's color, so an
+ * outline in the text color sets it apart. Its content description names the route, which the pill
+ * text no longer does.
+ */
+@Composable
+private fun PillBadge(content: PillContent, foreground: Color) {
+    val startingLabel = stringResource(R.string.live_update_overlay_starting)
+    Crossfade(content.starting, label = "pillBadge") { starting ->
+        Box(Modifier.heightIn(min = 24.dp), contentAlignment = Alignment.Center) {
+            if (starting) {
+                // The indicator is its own semantics node. Clear it so the label merges into the
+                // pill and TalkBack reads one button.
+                CircularProgressIndicator(
+                    Modifier.size(20.dp).clearAndSetSemantics {
+                        contentDescription = startingLabel
+                    },
+                    color = foreground,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                RoutePill(
+                    content.route.route,
+                    content.route.line,
+                    type = RoutePillType.FlexCompact,
+                    border = BorderStroke(1.5.dp, foreground),
                 )
             }
         }
@@ -315,23 +471,33 @@ internal fun Pill(
     foreground: Color,
     bottomPadding: Dp,
     onClick: () -> Unit,
-    content: @Composable () -> Unit,
+    enabled: Boolean = true,
+    badge: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
         modifier =
             Modifier.navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = bottomPadding)
-                .clickable(role = Role.Button, onClick = onClick),
+                .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         shape = RoundedCornerShape(50),
         color = background,
         contentColor = foreground,
         shadowElevation = 6.dp,
     ) {
-        Column(
-            Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Row(
+            Modifier.animateContentSize()
+                .padding(start = if (badge != null) 12.dp else 20.dp, end = 20.dp)
+                .padding(vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            content()
+            badge?.invoke()
+            Column(
+                horizontalAlignment =
+                    if (badge != null) Alignment.Start else Alignment.CenterHorizontally,
+                content = content,
+            )
         }
     }
 }
