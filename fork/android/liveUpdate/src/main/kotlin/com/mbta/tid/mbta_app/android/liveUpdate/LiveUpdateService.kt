@@ -167,7 +167,13 @@ class LiveUpdateService : Service() {
                     if (state.phase is LiveUpdatePhase.Finished) {
                         finish(text)
                     } else {
-                        val deepLinkPath = LiveUpdateDeepLink.path(currentRequest, snapshot.global)
+                        val deepLinkPath =
+                            LiveUpdateDeepLink.path(
+                                currentRequest,
+                                state.phase,
+                                LiveUpdateDeepLink.vehicleId(currentRequest, snapshot),
+                                snapshot.global,
+                            )
                         val content =
                             LiveUpdateNotification.ongoingContent(state, text, deepLinkPath)
                         if (content != lastPosted) {

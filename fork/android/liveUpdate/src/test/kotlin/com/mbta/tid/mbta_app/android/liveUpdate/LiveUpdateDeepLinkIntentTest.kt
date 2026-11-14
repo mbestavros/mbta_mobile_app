@@ -19,7 +19,7 @@ class LiveUpdateDeepLinkIntentTest {
     @Test
     fun `intent is a view intent for this app's MainActivity`() {
         val context = RuntimeEnvironment.getApplication()
-        val path = LiveUpdateDeepLink.path(f.request, f.global)
+        val path = LiveUpdateDeepLink.path(f.request, LiveUpdatePhase.Waiting, "v1", f.global)
 
         val intent = LiveUpdateDeepLink.intent(context, path)
 
