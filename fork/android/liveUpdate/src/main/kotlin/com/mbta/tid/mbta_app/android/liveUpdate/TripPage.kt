@@ -80,6 +80,33 @@ object StationPage {
     fun stopDetailsStopId(stopDetailsState: StopDetailsViewModel.State): String? =
         stopDetailsState.routeData?.filters?.stopId
 
+    /**
+     * The filter of the trip selected on stop details, so the overlay can offer "Track" on the
+     * departures without a trip page. This also covers a trip at its origin, where upstream shows
+     * no Follow button.
+     *
+     * The filter must match stop details' focus (its trip and vehicle, including a vehicle tapped
+     * on the map). The trip details model updates in an effect, so just after the user picks
+     * another departure it can still hold the previous trip. Null until the focused trip loads. The
+     * result equals the filter that upstream's Follow opens the trip page with.
+     */
+    fun trackableFilter(
+        isStopDetails: Boolean,
+        tripState: TripDetailsViewModel.State,
+        stopDetailsState: StopDetailsViewModel.State,
+    ): TripDetailsPageFilter? {
+        if (!isStopDetails || tripState.context != TripDetailsViewModel.Context.StopDetails) {
+            return null
+        }
+        val focused = stopDetailsState.routeData?.filters?.tripFilter ?: return null
+        val tripData = tripState.tripData ?: return null
+        return tripData.tripFilter.takeIf {
+            tripData.trip?.id == it.tripId &&
+                it.tripId == focused.tripId &&
+                it.vehicleId == focused.vehicleId
+        }
+    }
+
     /** The boarding station and, with a destination, the destination station. */
     fun trackedStationIds(request: LiveUpdateRequest, global: GlobalResponse?): Set<String> =
         listOfNotNull(request.stopId, request.destinationStopId)
@@ -98,11 +125,15 @@ object StationPage {
  */
 internal data class OverlayPage(
     val tripPageOpen: Boolean,
-    /** The trip page's filter, once the page can be tracked (see [TripPage.trackableFilter]). */
+    /**
+     * The filter to offer "Track" for: the trip page's (see [TripPage.trackableFilter]), or the
+     * trip selected on stop details (see [StationPage.trackableFilter]).
+     */
     val trackableFilter: TripDetailsPageFilter?,
     val pageTripId: String?,
     /** The stop that the trip page targets. */
     val pageTargetStopId: String?,
+    /** The route of [trackableFilter]'s trip, for the Track pill's badge. */
     val pageRouteId: Route.Id?,
     val isStopDetails: Boolean,
     val stopDetailsStopId: String?,
@@ -118,12 +149,18 @@ internal data class OverlayPage(
             val tripPageOpen = TripPage.isOpen(mapState, tripState)
             val tripData = tripState.tripData?.takeIf { tripPageOpen }
             val isStopDetails = StationPage.isStopDetails(mapState, tripState)
+            val stopDetailsFilter =
+                if (tripPageOpen) null
+                else StationPage.trackableFilter(isStopDetails, tripState, stopDetailsState)
             return OverlayPage(
                 tripPageOpen = tripPageOpen,
-                trackableFilter = TripPage.trackableFilter(tripPageOpen, tripState),
+                trackableFilter =
+                    TripPage.trackableFilter(tripPageOpen, tripState) ?: stopDetailsFilter,
                 pageTripId = tripData?.tripFilter?.tripId,
                 pageTargetStopId = tripData?.tripFilter?.stopId,
-                pageRouteId = tripData?.trip?.routeId,
+                pageRouteId =
+                    tripData?.trip?.routeId
+                        ?: tripState.tripData?.trip?.routeId?.takeIf { stopDetailsFilter != null },
                 isStopDetails = isStopDetails,
                 stopDetailsStopId =
                     if (isStopDetails) StationPage.stopDetailsStopId(stopDetailsState) else null,

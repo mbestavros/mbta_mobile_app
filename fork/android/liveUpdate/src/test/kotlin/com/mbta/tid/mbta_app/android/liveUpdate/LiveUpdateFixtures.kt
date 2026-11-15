@@ -57,8 +57,9 @@ class LiveUpdateFixtures {
         tripId: String = trip.id,
         occupancy: Vehicle.OccupancyStatus = Vehicle.OccupancyStatus.NoDataAvailable,
         carOccupancy: List<Vehicle.OccupancyStatus> = emptyList(),
+        vehicleId: String = "v1",
     ): Vehicle = objects.vehicle {
-        id = "v1"
+        id = vehicleId
         currentStatus = status
         currentStopSequence = stopSequence
         stopId = stopsBySequence.getValue(stopSequence).id
@@ -77,6 +78,7 @@ class LiveUpdateFixtures {
         vehicle: Vehicle?,
         arrivals: Map<Int, Duration> = emptyMap(),
         relationship: Prediction.ScheduleRelationship = Prediction.ScheduleRelationship.Scheduled,
+        predictedVehicles: Map<Int, String> = emptyMap(),
     ): TrackerSnapshot {
         val onTrip = vehicle?.takeIf { it.tripId == trip.id }
         val entries =
@@ -88,7 +90,14 @@ class LiveUpdateFixtures {
                             onTrip.currentStatus != Vehicle.CurrentStatus.StoppedAt)
                 }
                 .map { (sequence, stop) ->
-                    entry(stop, sequence, arrivals[sequence], relationship, vehicle)
+                    entry(
+                        stop,
+                        sequence,
+                        arrivals[sequence],
+                        relationship,
+                        vehicle,
+                        predictedVehicles[sequence] ?: "v1",
+                    )
                 }
         return TrackerSnapshot(trip, route, TripDetailsStopList(trip, entries), vehicle, global)
     }
@@ -99,6 +108,7 @@ class LiveUpdateFixtures {
         arrival: Duration?,
         relationship: Prediction.ScheduleRelationship,
         vehicle: Vehicle?,
+        predictedVehicleId: String,
     ): TripDetailsStopList.Entry {
         val prediction = arrival?.let {
             objects.prediction {
@@ -107,7 +117,7 @@ class LiveUpdateFixtures {
                 stopSequence = sequence
                 arrivalTime = now + it
                 scheduleRelationship = relationship
-                vehicleId = "v1"
+                vehicleId = predictedVehicleId
             }
         }
         return TripDetailsStopList.Entry(

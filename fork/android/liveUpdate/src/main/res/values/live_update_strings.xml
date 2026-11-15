@@ -81,4 +81,12 @@
     <string name="live_update_sheet_stop">Stop tracking</string>
     <string name="live_update_sheet_enable">Turn on Live Updates in settings</string>
     <string name="live_update_sheet_loading">Loading stops…</string>
+
+    <!-- Confirmation before tracking a trip replaces the tracked one. -->
+    <string name="live_update_switch_title">Stop tracking your current trip?</string>
+    <!-- %1$s is the tracked trip, such as "47 to Central Square". -->
+    <string name="live_update_switch_text">You\'re tracking %1$s. Only one trip can be tracked at a time.</string>
+    <string name="live_update_switch_text_unknown">Only one trip can be tracked at a time.</string>
+    <string name="live_update_switch_confirm">Track this trip</string>
+    <string name="live_update_switch_keep">Keep current trip</string>
 </resources>

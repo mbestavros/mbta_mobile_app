@@ -70,6 +70,7 @@ import com.mbta.tid.mbta_app.android.component.RoutePillType
 import com.mbta.tid.mbta_app.android.util.Typography
 import com.mbta.tid.mbta_app.android.util.notificationPermissionState
 import com.mbta.tid.mbta_app.map.ColorPalette
+import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import com.mbta.tid.mbta_app.repositories.IGlobalRepository
 import com.mbta.tid.mbta_app.viewModel.IMapViewModel
 import com.mbta.tid.mbta_app.viewModel.IStopDetailsViewModel
@@ -83,10 +84,11 @@ import org.koin.compose.koinInject
 private val TAB_BAR_HEIGHT = 72.dp
 
 /**
- * The Live Update pill. On a trip page that is not tracked, it offers to track the trip. This is
- * the only way to start a Live Update. On the trip page of the tracked trip, and on the stop
- * details page of its boarding or destination station, it opens the destination sheet. On other
- * screens, it opens the tracked trip again.
+ * The Live Update pill. On a trip page that is not tracked, it offers to track the trip. So does
+ * stop details with a trip selected that is not tracked, whether or not a vehicle is on it yet.
+ * These are the only ways to start a Live Update. On the trip page of the tracked trip, and on the
+ * stop details page of its boarding or destination station, it opens the destination sheet. On
+ * other screens, it opens the tracked trip again.
  */
 @Composable
 fun LiveUpdateOverlay(
@@ -112,7 +114,8 @@ fun LiveUpdateOverlay(
 
     if (pendingPermission != null) PermissionRequest(controller)
 
-    // An untracked trip page offers "Track this trip", even while another trip is tracked.
+    // An untracked trip on the trip page or selected on stop details offers "Track this trip", even
+    // while another trip is tracked.
     val trackFilter = page.trackableFilter?.takeIf { it.tripId != session?.request?.tripId }
     val current = session.takeIf { trackFilter == null }
     val onTrackedTripPage =
@@ -144,6 +147,11 @@ fun LiveUpdateOverlay(
     var sheetOpen by remember { mutableStateOf(false) }
     LaunchedEffect(showsPicker) { if (!showsPicker) sheetOpen = false }
 
+    // Tracking another trip ends the tracked one, so ask first. Drop the question if the page no
+    // longer offers that trip.
+    var confirmSwitch by remember { mutableStateOf<TripDetailsPageFilter?>(null) }
+    LaunchedEffect(trackFilter) { if (confirmSwitch != trackFilter) confirmSwitch = null }
+
     // One pill for every state, so it animates from one state to the next instead of popping.
     val pillContent =
         when {
@@ -168,7 +176,12 @@ fun LiveUpdateOverlay(
         bottomPadding = if (onEntryScreen) TAB_BAR_HEIGHT + 12.dp else 16.dp,
     ) {
         when {
-            trackFilter != null -> controller.track(trackFilter)
+            trackFilter != null ->
+                if (LiveUpdateSwitch.needsConfirmation(session, trackFilter)) {
+                    confirmSwitch = trackFilter
+                } else {
+                    controller.track(trackFilter)
+                }
             current == null -> Unit
             showsPicker -> {
                 sheetOpen = true
@@ -178,6 +191,16 @@ fun LiveUpdateOverlay(
                 returnToTrip(activity, current, scope, mayBeOnMorePage = onEntryScreen)
             }
         }
+    }
+    confirmSwitch?.let { filter ->
+        SwitchTripDialog(
+            currentTrip = LiveUpdateSwitch.currentTripName(session),
+            onConfirm = {
+                confirmSwitch = null
+                controller.track(filter)
+            },
+            onDismiss = { confirmSwitch = null },
+        )
     }
     if (sheetOpen && current != null) {
         DestinationSheet(

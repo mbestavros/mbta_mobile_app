@@ -77,8 +77,11 @@ class TripTracker(
             emit(retrying("schedules") { tripRepository.getTripSchedules(request.tripId) })
         }
 
-        // The filter from the trip page can have no vehicle yet. Find it from the predictions.
+        // The filter can have no vehicle yet, or name a bus that is reassigned before the trip
+        // starts (common at a bus origin). Follow the predicted vehicle until one is on the trip,
+        // but keep the vehicle the user focused on unless it reports that it is elsewhere.
         val vehicleId = MutableStateFlow(request.vehicleId)
+        var seenOnTrip = false
         val vehicle: Flow<Vehicle?> = vehicleId.flatMapLatest { id ->
             if (id == null) flowOf(null) else vehicleUpdates(id)
         }
@@ -104,11 +107,16 @@ class TripTracker(
                 }
                 .mapNotNull { it }
                 .onEach { snapshot ->
-                    if (vehicleId.value == null) {
-                        vehicleId.value =
-                            snapshot.stopList.stops.firstNotNullOfOrNull {
-                                it.prediction?.vehicleId
-                            }
+                    if (snapshot.vehicleOnTrip != null) seenOnTrip = true
+                    if (shouldRepickVehicle(snapshot, vehicleId.value, seenOnTrip)) {
+                        val picked = predictedVehicleId(snapshot, request, vehicleId.value)
+                        if (picked != vehicleId.value) {
+                            Log.i(
+                                LIVE_UPDATE_TAG,
+                                "Following vehicle $picked, was ${vehicleId.value}",
+                            )
+                            vehicleId.value = picked
+                        }
                     }
                 }
         emitAll(snapshots)
@@ -225,5 +233,43 @@ class TripTracker(
         }
 
         private fun isPermanent(code: Int): Boolean = code in 400..499 && code != 408 && code != 429
+
+        /**
+         * True when the tracker should look for the trip's vehicle in the predictions: no vehicle
+         * has been on the trip yet, and either there is no vehicle or [current] has reported and is
+         * not on this trip. The vehicle channel sends null before its first message, so a null
+         * vehicle alone does not replace the vehicle the user focused on.
+         */
+        fun shouldRepickVehicle(
+            snapshot: TrackerSnapshot,
+            current: String?,
+            seenOnTrip: Boolean,
+        ): Boolean {
+            if (seenOnTrip || snapshot.vehicleOnTrip != null) return false
+            return current == null || snapshot.vehicle != null
+        }
+
+        /**
+         * The vehicle to follow while none has been seen on the trip: the one predicted at the
+         * boarding stop, else the first predicted one, else [current]. Predictions follow the
+         * MBTA's latest vehicle assignment, so a reassigned bus is picked up.
+         */
+        fun predictedVehicleId(
+            snapshot: TrackerSnapshot,
+            request: LiveUpdateRequest,
+            current: String?,
+        ): String? {
+            val stops = snapshot.stopList.stops
+            val boarding =
+                request.stopSequence?.let { sequence ->
+                    stops.firstOrNull { it.stopSequence == sequence }
+                }
+                    ?: stops.firstOrNull {
+                        it.stop.id == request.stopId || it.stop.parentStationId == request.stopId
+                    }
+            return boarding?.prediction?.vehicleId
+                ?: stops.firstNotNullOfOrNull { it.prediction?.vehicleId }
+                ?: current
+        }
     }
 }

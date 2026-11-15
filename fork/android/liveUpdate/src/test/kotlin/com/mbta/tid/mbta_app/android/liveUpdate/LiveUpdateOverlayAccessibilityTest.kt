@@ -235,4 +235,56 @@ class LiveUpdateOverlayAccessibilityTest {
             .performClick()
         assertEquals(1, opens)
     }
+
+    private fun setSwitchDialog(
+        currentTrip: Pair<String, String>?,
+        onConfirm: () -> Unit = {},
+        onDismiss: () -> Unit = {},
+    ) {
+        compose.setContent {
+            MyApplicationTheme { SwitchTripDialog(currentTrip, onConfirm, onDismiss) }
+        }
+    }
+
+    @Test
+    fun switchDialogNamesTheTrackedTrip() {
+        setSwitchDialog("47" to "Central Square")
+
+        compose.onNodeWithText(string(R.string.live_update_switch_title)).assertExists()
+        compose
+            .onNodeWithText(
+                string(
+                    R.string.live_update_switch_text,
+                    string(R.string.live_update_title, "47", "Central Square"),
+                ),
+            )
+            .assertExists()
+    }
+
+    @Test
+    fun switchDialogWithoutTripDataStillExplains() {
+        setSwitchDialog(currentTrip = null)
+
+        compose.onNodeWithText(string(R.string.live_update_switch_text_unknown)).assertExists()
+    }
+
+    @Test
+    fun switchDialogButtonsAreEnabledButtons() {
+        var confirms = 0
+        var dismissals = 0
+        setSwitchDialog("47" to "Central Square", { confirms++ }, { dismissals++ })
+
+        compose
+            .onNodeWithText(string(R.string.live_update_switch_confirm))
+            .assert(hasRole(Role.Button))
+            .assertIsEnabled()
+            .performClick()
+        assertEquals(1, confirms)
+        compose
+            .onNodeWithText(string(R.string.live_update_switch_keep))
+            .assert(hasRole(Role.Button))
+            .assertIsEnabled()
+            .performClick()
+        assertEquals(1, dismissals)
+    }
 }

@@ -233,4 +233,42 @@ class LiveUpdateStateCalculatorTest {
         assertEquals(listOf(0, 0, 1, 2, 3, 4, 5), positions)
         assertNotNull(anchor)
     }
+
+    @Test
+    fun `boarding at the origin waits while the bus finishes its previous trip`() {
+        // Tracking starts from stop details at A, the trip's first stop. The bus is still on its
+        // previous trip, so it is not on this trip yet.
+        val origin = f.request.copy(stopId = f.stopA.id, stopSequence = 10)
+        val previousTrip = f.vehicle(InTransitTo, 40, tripId = "previousTrip")
+        val originAnchor =
+            checkNotNull(
+                TrackingAnchor.from(f.snapshot(previousTrip, mapOf(10 to 8.minutes)), origin),
+            )
+        fun computeAt(snapshot: TrackerSnapshot, wasOnTrip: Boolean) =
+            LiveUpdateStateCalculator.compute(snapshot, origin, originAnchor, wasOnTrip, f.now)
+
+        assertEquals(listOf(10, 20, 30, 40, 50), originAnchor.sequences)
+
+        val waiting = computeAt(f.snapshot(previousTrip, mapOf(10 to 8.minutes)), false)
+        assertEquals(LiveUpdatePhase.Waiting, waiting.phase)
+        assertEquals(LiveUpdateLabel.Minutes(8), waiting.label)
+        assertEquals("A", waiting.targetStopName)
+        assertNull(waiting.stopsAway)
+        assertEquals(0, waiting.progress)
+
+        // The previous trip ends and the bus moves on to another one. Not this trip's end.
+        val otherTrip = f.vehicle(StoppedAt, 50, tripId = "previousTrip")
+        assertEquals(
+            LiveUpdatePhase.Waiting,
+            computeAt(f.snapshot(otherTrip, mapOf(10 to 3.minutes)), false).phase,
+        )
+
+        // The bus starts this trip at the origin.
+        val boarding = computeAt(f.snapshot(f.vehicle(StoppedAt, 10)), true)
+        assertEquals(LiveUpdatePhase.Waiting, boarding.phase)
+        assertEquals(LiveUpdateLabel.Boarding, boarding.label)
+
+        val departed = computeAt(f.snapshot(f.vehicle(InTransitTo, 20)), true)
+        assertEquals(LiveUpdatePhase.Finished(FinishReason.DepartedBoarding), departed.phase)
+    }
 }

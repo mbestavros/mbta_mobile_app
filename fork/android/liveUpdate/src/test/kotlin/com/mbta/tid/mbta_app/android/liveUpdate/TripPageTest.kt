@@ -3,7 +3,9 @@ package com.mbta.tid.mbta_app.android.liveUpdate
 import com.mbta.tid.mbta_app.model.ObjectCollectionBuilder
 import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.StopDetailsPageFilters
+import com.mbta.tid.mbta_app.model.TripDetailsFilter
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
+import com.mbta.tid.mbta_app.model.Vehicle
 import com.mbta.tid.mbta_app.model.stopDetailsPage.TripData
 import com.mbta.tid.mbta_app.viewModel.MapViewModel
 import com.mbta.tid.mbta_app.viewModel.StopDetailsViewModel
@@ -25,12 +27,29 @@ class TripPageTest {
         filter: TripDetailsPageFilter?,
         context: Context?,
         tripLoaded: Boolean = true,
+        vehicleTripId: String? = null,
     ) =
         TripDetailsViewModel.State(
             tripData =
                 filter?.let {
-                    val trip = if (tripLoaded) objects.trip { id = it.tripId } else null
-                    TripData(it, trip, null, null, null)
+                    val trip =
+                        if (tripLoaded) {
+                            objects.trip {
+                                id = it.tripId
+                                directionId = 0
+                            }
+                        } else {
+                            null
+                        }
+                    val vehicle = vehicleTripId?.let { vehicleTrip ->
+                        objects.vehicle {
+                            id = "v1"
+                            tripId = vehicleTrip
+                            directionId = 0
+                            currentStatus = Vehicle.CurrentStatus.StoppedAt
+                        }
+                    }
+                    TripData(it, trip, null, null, vehicle)
                 },
             context = context,
         )
@@ -74,11 +93,14 @@ class TripPageTest {
     private val overview =
         MapViewModel.State(MapViewModel.LayerState.Overview, layersInitialized = true)
 
-    private fun stopDetails(stopId: String) =
+    /** Stop details' focus on [filterA]'s trip and vehicle. */
+    private val focusA = TripDetailsFilter(filterA.tripId, filterA.vehicleId, filterA.stopSequence)
+
+    private fun stopDetails(stopId: String, focus: TripDetailsFilter? = null) =
         StopDetailsViewModel.State(
             routeData =
                 StopDetailsViewModel.RouteData.Unfiltered(
-                    StopDetailsPageFilters(stopId, null, null),
+                    StopDetailsPageFilters(stopId, null, focus),
                     emptyList(),
                 ),
         )
@@ -122,6 +144,108 @@ class TripPageTest {
         assertTrue(page.isStopDetails)
         assertEquals("place-pktrm", page.stopDetailsStopId)
         assertFalse(page.onEntryScreen)
+    }
+
+    private val focusedOnA = stopDetails("place-pktrm", focusA)
+
+    @Test
+    fun `stop details offers the selected trip whatever its vehicle is doing`() {
+        // At a bus origin: no vehicle yet, or the bus is still on its previous trip.
+        assertEquals(
+            filterA,
+            StationPage.trackableFilter(true, state(filterA, Context.StopDetails), focusedOnA),
+        )
+        assertEquals(
+            filterA,
+            StationPage.trackableFilter(
+                true,
+                state(filterA, Context.StopDetails, vehicleTripId = "previousTrip"),
+                focusedOnA,
+            ),
+        )
+        // The vehicle is on the trip, so upstream also shows Follow.
+        assertEquals(
+            filterA,
+            StationPage.trackableFilter(
+                true,
+                state(filterA, Context.StopDetails, vehicleTripId = filterA.tripId),
+                focusedOnA,
+            ),
+        )
+    }
+
+    @Test
+    fun `stop details tracks the focused vehicle`() {
+        val filter =
+            StationPage.trackableFilter(
+                true,
+                state(filterA, Context.StopDetails, vehicleTripId = filterA.tripId),
+                focusedOnA,
+            )
+        assertEquals("v1", filter?.vehicleId)
+        assertEquals("tripA", filter?.tripId)
+    }
+
+    @Test
+    fun `stop details offers nothing while the trip model still holds another selection`() {
+        // The user picked another departure, and the trip model hasn't caught up yet.
+        val otherTrip = stopDetails("place-pktrm", TripDetailsFilter("tripB", "v2", 40))
+        assertNull(
+            StationPage.trackableFilter(true, state(filterA, Context.StopDetails), otherTrip),
+        )
+        // Same trip, another vehicle tapped on the map.
+        val otherVehicle =
+            stopDetails("place-pktrm", TripDetailsFilter("tripA", "v2", 30, selectionLock = true))
+        assertNull(
+            StationPage.trackableFilter(true, state(filterA, Context.StopDetails), otherVehicle),
+        )
+    }
+
+    @Test
+    fun `stop details offers nothing off stop details or before the trip loads`() {
+        val tripModel = state(filterA, Context.StopDetails)
+        assertNull(StationPage.trackableFilter(false, tripModel, focusedOnA))
+        assertNull(
+            StationPage.trackableFilter(true, state(filterA, Context.TripDetails), focusedOnA),
+        )
+        assertNull(
+            StationPage.trackableFilter(true, state(null, Context.StopDetails), focusedOnA),
+        )
+        assertNull(
+            StationPage.trackableFilter(
+                true,
+                state(filterA, Context.StopDetails, tripLoaded = false),
+                focusedOnA,
+            ),
+        )
+        // No trip selected on stop details.
+        assertNull(StationPage.trackableFilter(true, tripModel, stopDetails("place-pktrm")))
+    }
+
+    @Test
+    fun `overlay page offers Track on stop details without opening the trip page`() {
+        val trip = objects.trip {
+            id = "tripA"
+            routeId = "47"
+            directionId = 0
+        }
+        val tripState =
+            TripDetailsViewModel.State(
+                tripData = TripData(filterA, trip, null, null, null),
+                context = Context.StopDetails,
+            )
+        val map =
+            MapViewModel.State(
+                MapViewModel.LayerState.StopSelected(objects.stop { id = "place-pktrm" }, null),
+                layersInitialized = true,
+            )
+        val page = OverlayPage.from(map, tripState, focusedOnA)
+
+        assertEquals(filterA, page.trackableFilter)
+        assertEquals(Route.Id("47"), page.pageRouteId)
+        assertFalse(page.tripPageOpen)
+        assertNull(page.pageTripId)
+        assertNull(page.pageTargetStopId)
     }
 
     @Test

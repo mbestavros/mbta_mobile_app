@@ -1,7 +1,9 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
 import android.app.Application
+import com.mbta.tid.mbta_app.model.Vehicle
 import com.mbta.tid.mbta_app.model.response.ApiResult
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceTimeBy
@@ -9,6 +11,8 @@ import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,6 +26,65 @@ import org.robolectric.annotation.Config
 class TripTrackerTest {
     private fun error(code: Int? = null, message: String = "boom") =
         ApiResult.Error<String>(code, message)
+
+    @Test
+    fun `the focused vehicle is kept until it reports`() {
+        val f = LiveUpdateFixtures()
+        // The vehicle channel's first null, before the focused vehicle's first message.
+        val beforeFirstMessage = f.snapshot(vehicle = null, arrivals = mapOf(30 to 4.minutes))
+        assertFalse(TripTracker.shouldRepickVehicle(beforeFirstMessage, "v1", seenOnTrip = false))
+        // Nothing to keep: pick from the predictions.
+        assertTrue(TripTracker.shouldRepickVehicle(beforeFirstMessage, null, seenOnTrip = false))
+    }
+
+    @Test
+    fun `a focused vehicle on the trip is never replaced`() {
+        val f = LiveUpdateFixtures()
+        val onTrip = f.snapshot(f.vehicle(Vehicle.CurrentStatus.InTransitTo, 20))
+        assertFalse(TripTracker.shouldRepickVehicle(onTrip, "v1", seenOnTrip = false))
+    }
+
+    @Test
+    fun `a vehicle elsewhere is replaced only before the trip starts`() {
+        val f = LiveUpdateFixtures()
+        val elsewhere =
+            f.snapshot(f.vehicle(Vehicle.CurrentStatus.InTransitTo, 40, tripId = "previousTrip"))
+        assertTrue(TripTracker.shouldRepickVehicle(elsewhere, "v1", seenOnTrip = false))
+        assertFalse(TripTracker.shouldRepickVehicle(elsewhere, "v1", seenOnTrip = true))
+    }
+
+    @Test
+    fun `a reassigned bus is picked up from the boarding stop's prediction`() {
+        val f = LiveUpdateFixtures()
+        // The request named v1, but the boarding stop (C, 30) now predicts v2.
+        val snapshot =
+            f.snapshot(
+                vehicle = f.vehicle(Vehicle.CurrentStatus.InTransitTo, 20, tripId = "previousTrip"),
+                arrivals = mapOf(20 to 2.minutes, 30 to 4.minutes),
+                predictedVehicles = mapOf(20 to "v3", 30 to "v2"),
+            )
+        assertEquals("v2", TripTracker.predictedVehicleId(snapshot, f.request, "v1"))
+    }
+
+    @Test
+    fun `without a boarding prediction the first predicted vehicle is used`() {
+        val f = LiveUpdateFixtures()
+        val snapshot =
+            f.snapshot(
+                vehicle = null,
+                arrivals = mapOf(40 to 6.minutes),
+                predictedVehicles = mapOf(40 to "v2"),
+            )
+        assertEquals("v2", TripTracker.predictedVehicleId(snapshot, f.request, "v1"))
+    }
+
+    @Test
+    fun `without predictions the current vehicle is kept`() {
+        val f = LiveUpdateFixtures()
+        val snapshot = f.snapshot(vehicle = null)
+        assertEquals("v1", TripTracker.predictedVehicleId(snapshot, f.request, "v1"))
+        assertNull(TripTracker.predictedVehicleId(snapshot, f.request, null))
+    }
 
     @Test
     fun `a burst of errors makes one reconnect after the delay`() = runTest {
