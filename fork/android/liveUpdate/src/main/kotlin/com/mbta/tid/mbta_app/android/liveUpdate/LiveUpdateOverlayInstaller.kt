@@ -29,6 +29,12 @@ object LiveUpdateOverlayInstaller : Application.ActivityLifecycleCallbacks {
     private fun install(activity: MainActivity) {
         val content = activity.findViewById<FrameLayout>(android.R.id.content) ?: return
         if (content.findViewWithTag<ComposeView>(overlayTag) != null) return
+        UpstreamContract.contentProblem(content, overlayTag)?.let { problem ->
+            UpstreamContract.report(activity, UpstreamContract.OVERLAY_ORDER, problem)
+            // An overlay added to an empty content view would be reused by setContent, and
+            // replace upstream's UI. Go without the pill instead.
+            if (content.childCount == 0) return
+        }
         val overlay =
             ComposeView(activity).apply {
                 tag = overlayTag

@@ -178,7 +178,7 @@ class TripTracker(
         fun onError(channel: String, error: ApiResult.Error<*>) {
             Log.w(LIVE_UPDATE_TAG, "$channel error: $error")
             // One bad message does not break the channel. Rejoining would not fix it.
-            if (error.message.startsWith(PARSE_ERROR_PREFIX)) return
+            if (error.message.startsWith(UpstreamContract.PARSE_ERROR_PREFIX)) return
             if (pending?.isActive == true) return
             pending = scope.launch {
                 delay(RECONNECT_DELAY_MS)
@@ -191,13 +191,6 @@ class TripTracker(
         const val RECONNECT_DELAY_MS = 10_000L
         const val FIRST_RETRY_DELAY_MS = 2_000L
         const val MAX_RETRY_DELAY_MS = 60_000L
-
-        /**
-         * The start of upstream's parse error message (SocketError.FAILED_TO_PARSE in shared). It
-         * is internal to shared, so it is copied here. If it changes, parse errors reconnect too,
-         * at most once per [RECONNECT_DELAY_MS].
-         */
-        const val PARSE_ERROR_PREFIX = "channel failed to parse"
 
         /**
          * Runs [block] until it succeeds, backing off from [FIRST_RETRY_DELAY_MS] to

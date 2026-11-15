@@ -32,6 +32,12 @@ internal object LiveUpdateMapPin {
     private val CHECK_INTERVAL = 1.seconds
 
     /**
+     * How many checks in a row may find the pin unable to show before it is reported. The style can
+     * take a while to load, for example with a weak connection.
+     */
+    internal const val REPORT_AFTER_CHECKS = 15
+
+    /**
      * Upstream's pin layer for [stationId], under the fork's layer ID. Null if upstream changed.
      */
     suspend fun pinLayer(stationId: String, colorPalette: ColorPalette): SymbolLayer? {
@@ -40,19 +46,43 @@ internal object LiveUpdateMapPin {
                     colorPalette,
                     StopLayerGenerator.State.StopDetails(stationId),
                 )
-                .lastOrNull { it.id.endsWith("-selected-pin") }
-        if (upstream == null) {
-            Log.w(LIVE_UPDATE_TAG, "No selected pin layer in StopLayerGenerator")
-            return null
-        }
-        return upstream.withId(LAYER_ID)
+                .lastOrNull { it.id.endsWith(UpstreamContract.SELECTED_PIN_LAYER_SUFFIX) }
+        return upstream?.withId(LAYER_ID)
     }
+
+    /**
+     * Why the pin can't be added right now, or null if it can, or is on the map already. Each part
+     * is something that upstream's map setup provides, so a reason that lasts is a change there.
+     */
+    internal fun pinProblem(
+        hasMapView: Boolean,
+        layerExists: Boolean,
+        sourceExists: Boolean,
+        anchorExists: Boolean,
+    ): String? =
+        when {
+            !hasMapView -> "no MapView in the view tree"
+            layerExists -> null
+            !sourceExists -> "no style source ${StopFeaturesBuilder.stopSourceId}"
+            !anchorExists -> "no layer ${MapLayerManager.puckAnchorLayerId}"
+            else -> null
+        }
 
     /** Shows the pin and keeps it on the map until the calling coroutine is cancelled. */
     suspend fun keepShown(activity: Activity, stationId: String, colorPalette: ColorPalette) {
-        val layer = pinLayer(stationId, colorPalette)?.toMapbox() ?: return
-        var warned = false
-        var addWarned = false
+        val layer =
+            pinLayer(stationId, colorPalette)?.toMapbox()
+                ?: run {
+                    UpstreamContract.report(
+                        activity,
+                        UpstreamContract.MAP_PIN_LAYER,
+                        "no layer ending in ${UpstreamContract.SELECTED_PIN_LAYER_SUFFIX} in " +
+                            "StopLayerGenerator",
+                    )
+                    return
+                }
+        var addFailure: String? = null
+        var problemChecks = 0
         // Walking the view tree every second is wasteful. Search again only if the view is gone.
         var mapView = findMapView(activity.window.decorView)
         // Replace a layer left by a previous station or color palette.
@@ -64,26 +94,29 @@ internal object LiveUpdateMapPin {
                 mapView = findMapView(activity.window.decorView)
             }
             val map = mapView?.mapboxMap
-            if (map == null) {
-                if (!warned) Log.w(LIVE_UPDATE_TAG, "No MapView for the destination pin")
-                warned = true
-            } else if (
-                !map.styleLayerExists(LAYER_ID) &&
-                    map.styleSourceExists(StopFeaturesBuilder.stopSourceId)
-            ) {
-                // Before upstream adds its anchor slots, wait: a layer added on top would end up
-                // below upstream's stop layers.
-                if (map.styleLayerExists(MapLayerManager.puckAnchorLayerId)) {
-                    try {
-                        map.addLayerBelow(layer, below = MapLayerManager.puckAnchorLayerId)
-                    } catch (e: Exception) {
-                        // This retries every second, so log a persistent failure only once.
-                        if (!addWarned) {
-                            Log.w(LIVE_UPDATE_TAG, "Could not add the destination pin", e)
-                        }
-                        addWarned = true
+            val layerExists = map?.styleLayerExists(LAYER_ID) == true
+            val sourceExists = map?.styleSourceExists(StopFeaturesBuilder.stopSourceId) == true
+            // Before upstream adds its anchor slots, wait: a layer added on top would end up below
+            // upstream's stop layers.
+            val anchorExists = map?.styleLayerExists(MapLayerManager.puckAnchorLayerId) == true
+            if (map != null && !layerExists && sourceExists && anchorExists) {
+                try {
+                    map.addLayerBelow(layer, below = MapLayerManager.puckAnchorLayerId)
+                    addFailure = null
+                } catch (e: Exception) {
+                    // This retries every second, so log a persistent failure only once.
+                    if (addFailure == null) {
+                        Log.w(LIVE_UPDATE_TAG, "Could not add the destination pin", e)
                     }
+                    addFailure = "adding the layer failed: $e"
                 }
+            }
+            val problem =
+                if (layerExists) null
+                else pinProblem(map != null, layerExists, sourceExists, anchorExists) ?: addFailure
+            problemChecks = if (problem == null) 0 else problemChecks + 1
+            if (problem != null && problemChecks == REPORT_AFTER_CHECKS) {
+                UpstreamContract.report(activity, UpstreamContract.MAP_PIN_NOT_SHOWN, problem)
             }
             delay(CHECK_INTERVAL)
         }

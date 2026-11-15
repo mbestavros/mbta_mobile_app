@@ -114,7 +114,7 @@ class TripTrackerTest {
 
         reconnector.onError(
             "Vehicle",
-            error(message = "${TripTracker.PARSE_ERROR_PREFIX} - bad payload"),
+            error(message = "${UpstreamContract.PARSE_ERROR_PREFIX} - bad payload"),
         )
         advanceTimeBy(TripTracker.RECONNECT_DELAY_MS * 2)
         runCurrent()

@@ -81,9 +81,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
-/** Height of the upstream bottom tab row (a Material 3 tab with an icon and a label). */
-private val TAB_BAR_HEIGHT = 72.dp
-
 /**
  * The Live Update pill. On a trip page that is not tracked, it offers to track the trip. So does
  * stop details with a trip selected that is not tracked, whether or not a vehicle is on it yet.
@@ -176,7 +173,7 @@ fun LiveUpdateOverlay(
         }
     AnimatedLiveUpdatePill(
         pillContent,
-        bottomPadding = if (onEntryScreen) TAB_BAR_HEIGHT + 12.dp else 16.dp,
+        bottomPadding = if (onEntryScreen) UpstreamContract.TAB_BAR_HEIGHT + 12.dp else 16.dp,
     ) {
         when {
             trackFilter != null ->
@@ -221,9 +218,6 @@ fun LiveUpdateOverlay(
     }
 }
 
-/** How long the map and sheet page may take to handle a deep link before we assume it can't. */
-private const val DEEP_LINK_HANDLED_TIMEOUT_MS = 1_500L
-
 /**
  * Opens the tracked trip with the stop deep link. The map and sheet page handles the link and
  * clears it on its next frame.
@@ -233,6 +227,10 @@ private const val DEEP_LINK_HANDLED_TIMEOUT_MS = 1_500L
  * restart MainActivity with the link as a new task. That drops upstream's saved navigation state,
  * so the new activity starts on the map and sheet page and opens the link there. If the guess is
  * wrong, the cost is a UI restart, never closing the app.
+ *
+ * Off the entry screen, the map and sheet page is the only page that can be open, so a link that is
+ * still pending after the timeout means upstream no longer handles it there. That is reported (see
+ * [UpstreamContract]) and nothing restarts.
  */
 private fun returnToTrip(
     activity: MainActivity,
@@ -245,20 +243,52 @@ private fun returnToTrip(
     val vehicleId = LiveUpdateDeepLink.vehicleId(session.request, session.snapshot)
     val target = LiveUpdateDeepLink.state(session.request, phase, vehicleId, global)
     activity.deepLinkStateFlow.value = target
-    if (!mayBeOnMorePage) return
     scope.launch {
-        delay(DEEP_LINK_HANDLED_TIMEOUT_MS)
-        if (activity.deepLinkStateFlow.value != target || activity.isFinishing) return@launch
-        activity.clearDeepLink()
-        activity.startActivity(
-            LiveUpdateDeepLink.intent(
+        delay(UpstreamContract.DEEP_LINK_HANDLED_TIMEOUT_MS)
+        val stillPending = activity.deepLinkStateFlow.value == target
+        when (pendingLinkOutcome(stillPending, activity.isFinishing, mayBeOnMorePage)) {
+            PendingLinkOutcome.None -> Unit
+            PendingLinkOutcome.ReportBreak ->
+                UpstreamContract.report(
                     activity,
-                    LiveUpdateDeepLink.path(session.request, phase, vehicleId, global),
+                    UpstreamContract.DEEP_LINK_UNHANDLED,
+                    "still pending after ${UpstreamContract.DEEP_LINK_HANDLED_TIMEOUT_MS} ms",
                 )
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
+            PendingLinkOutcome.Restart -> {
+                LiveUpdateDiagnostics(activity).record("deep_link_restart reason=still_pending")
+                activity.clearDeepLink()
+                activity.startActivity(
+                    LiveUpdateDeepLink.intent(
+                            activity,
+                            LiveUpdateDeepLink.path(session.request, phase, vehicleId, global),
+                        )
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                )
+            }
+        }
     }
 }
+
+/** What to do once the deep link had time to be handled. */
+internal enum class PendingLinkOutcome {
+    /** Upstream handled the link, or the activity is going away. */
+    None,
+    /** Upstream no longer handles the link on a page that always did. */
+    ReportBreak,
+    /** The guess that the More page is open: start MainActivity again with the link. */
+    Restart,
+}
+
+internal fun pendingLinkOutcome(
+    stillPending: Boolean,
+    activityFinishing: Boolean,
+    mayBeOnMorePage: Boolean,
+): PendingLinkOutcome =
+    when {
+        !stillPending || activityFinishing -> PendingLinkOutcome.None
+        mayBeOnMorePage -> PendingLinkOutcome.Restart
+        else -> PendingLinkOutcome.ReportBreak
+    }
 
 /**
  * Pins [stationId] on the map while it is not null. See [LiveUpdateMapPin].
