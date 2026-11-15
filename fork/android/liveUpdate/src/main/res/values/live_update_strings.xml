@@ -35,10 +35,13 @@
     <string name="live_update_time_to">%1$s to %2$s</string>
     <!-- Second line while riding. -->
     <string name="live_update_next">Next: %1$s</string>
+    <!-- Second line while riding, when the next stop is the destination. -->
+    <string name="live_update_get_off_at">Get off at %1$s</string>
     <string name="live_update_at_stop_eta">%1$s · ETA %2$s</string>
 
     <string name="live_update_sub_eta">ETA %1$s</string>
-    <string name="live_update_sub_arrive">Arrive %1$s</string>
+    <!-- After the ETA while riding: the trip's headsign, such as "To Alewife". -->
+    <string name="live_update_direction">To %1$s</string>
     <string name="live_update_ride_minutes">%1$d min ride</string>
     <string name="live_update_ride_hours">%1$d hr %2$d min ride</string>
 

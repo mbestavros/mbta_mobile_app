@@ -31,6 +31,8 @@ class LiveUpdateTextTest {
                 R.string.live_update_next_stop_to to "Next stop: %1\$s",
                 R.string.live_update_time_to to "%1\$s to %2\$s",
                 R.string.live_update_next to "Next: %1\$s",
+                R.string.live_update_get_off_at to "Get off at %1\$s",
+                R.string.live_update_direction to "To %1\$s",
                 R.string.live_update_at_stop_eta to "%1\$s · ETA %2\$s",
                 R.string.live_update_chip_boarding to "Board",
                 R.string.live_update_chip_arriving to "Now",
@@ -41,7 +43,6 @@ class LiveUpdateTextTest {
                 R.string.live_update_finished_cancelled to "Trip cancelled at %1\$s",
                 R.string.live_update_finished_already_passed to "Already past %1\$s",
                 R.string.live_update_sub_eta to "ETA %1\$s",
-                R.string.live_update_sub_arrive to "Arrive %1\$s",
                 R.string.live_update_ride_minutes to "%1\$d min ride",
                 R.string.live_update_ride_hours to "%1\$d hr %2\$d min ride",
                 R.string.crowding_not_crowded to "Not crowded",
@@ -100,7 +101,7 @@ class LiveUpdateTextTest {
     }
 
     @Test
-    fun `waiting with a destination ends with the arrival and the ride time`() {
+    fun `waiting with a destination ends with the ETA and the ride time`() {
         val text =
             text(
                 f.snapshot(f.vehicle(InTransitTo, 20), mapOf(30 to 4.minutes, 50 to 12.minutes)),
@@ -108,7 +109,7 @@ class LiveUpdateTextTest {
             )
 
         assertEquals("4 min · 1 stop away", text.title)
-        assertEquals("Arrive 9:30 AM · 8 min ride", text.text)
+        assertEquals("ETA 9:30 AM · 8 min ride", text.text)
     }
 
     @Test
@@ -174,19 +175,29 @@ class LiveUpdateTextTest {
 
         assertEquals("3 min · 2 stops to E", text.title)
         assertEquals("Next: D", text.subText)
-        // The boarding stop left the stop list, so without a remembered time there's no ride time.
-        assertEquals("Arrive 9:30 AM", text.text)
+        assertEquals("ETA 9:30 AM · To Alewife", text.text)
     }
 
     @Test
-    fun `riding to the last stop names it as the next stop`() {
+    fun `riding shows the direction instead of the ride time`() {
+        val state = riding(40, 3.minutes).copy(rideDuration = 15.minutes)
+
+        assertEquals(
+            "ETA 9:30 AM · To Alewife",
+            LiveUpdateTextFormatter.format(state, strings).text,
+        )
+        assertEquals("To Alewife", LiveUpdateTextFormatter.subText(state.copy(eta = null), strings))
+    }
+
+    @Test
+    fun `riding to the last stop says to get off there`() {
         val inTransit = LiveUpdateTextFormatter.format(riding(50, 2.minutes), strings)
         val stopped =
             LiveUpdateTextFormatter.format(riding(40, 2.minutes, status = StoppedAt), strings)
 
         for (text in listOf(inTransit, stopped)) {
             assertEquals("2 min · Next stop: E", text.title)
-            assertNull(text.subText)
+            assertEquals("Get off at E", text.subText)
             assertEquals("1 stop", text.chip)
         }
     }
@@ -211,7 +222,7 @@ class LiveUpdateTextTest {
         val text = LiveUpdateTextFormatter.format(riding(50, 10.seconds), strings)
 
         assertEquals("Arriving at E", text.title)
-        assertNull(text.subText)
+        assertEquals("Get off at E", text.subText)
         assertEquals("Now", text.chip)
     }
 
@@ -313,7 +324,7 @@ class LiveUpdateTextTest {
 
         assertNull(LiveUpdateTextFormatter.subText(noPredictions, strings))
         assertEquals(
-            "Arrive 9:30 AM · 1 hr 15 min ride",
+            "ETA 9:30 AM · 1 hr 15 min ride",
             LiveUpdateTextFormatter.subText(longRide, strings),
         )
     }

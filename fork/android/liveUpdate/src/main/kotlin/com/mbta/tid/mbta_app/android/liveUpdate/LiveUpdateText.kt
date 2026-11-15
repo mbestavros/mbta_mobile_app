@@ -35,7 +35,10 @@ data class LiveUpdateText(
     val title: String,
     val text: String,
     val chip: String?,
-    /** The secondary line: the route and crowding while waiting, the next stop while riding. */
+    /**
+     * The secondary line: the route and crowding while waiting, the next stop while riding, "Get
+     * off at X" on the last leg.
+     */
     val subText: String? = null,
 )
 
@@ -100,9 +103,9 @@ object LiveUpdateTextFormatter {
     }
 
     /**
-     * "12 min · 3 stops to Downtown Crossing", "Next: Park Street", the ETA. On the last leg: "2
-     * min · Next stop: Downtown Crossing" and no second line. The numbers come before the
-     * destination, so a long stop name can only cut off itself.
+     * "12 min · 3 stops to Downtown Crossing", "Next: Park Street", "ETA 9:30 AM · To Alewife". On
+     * the last leg: "2 min · Next stop: Downtown Crossing" and "Get off at Downtown Crossing". The
+     * numbers come before the destination, so a long stop name can only cut off itself.
      */
     private fun ridingText(state: LiveUpdateState, strings: StringLookup): LiveUpdateText {
         val destination = state.destinationStopName ?: state.targetStopName
@@ -127,10 +130,14 @@ object LiveUpdateTextFormatter {
                 time != null -> strings.string(R.string.live_update_time_to, time, destination)
                 else -> strings.string(R.string.live_update_text_unknown, destination)
             }
+        val next = state.nextStopName
         val sub =
-            state.nextStopName
-                ?.takeIf { it != destination }
-                ?.let { strings.string(R.string.live_update_next, it) }
+            when {
+                state.label == LiveUpdateLabel.Arriving || next == destination ->
+                    strings.string(R.string.live_update_get_off_at, destination)
+                next != null -> strings.string(R.string.live_update_next, next)
+                else -> null
+            }
         val text = subText(state, strings) ?: state.targetStopName
         return LiveUpdateText(title, text, chip(state, strings), sub)
     }
@@ -187,8 +194,8 @@ object LiveUpdateTextFormatter {
     }
 
     /**
-     * "ETA 5:42 PM" without a destination. "Arrive 6:01 PM · 19 min ride" with a destination.
-     * Unknown parts are left out.
+     * "ETA 5:42 PM" without a destination. "ETA 6:01 PM · 19 min ride" with a destination while
+     * waiting, "ETA 6:01 PM · To Alewife" while riding. Unknown parts are left out.
      */
     fun subText(state: LiveUpdateState, strings: StringLookup): String? {
         if (state.phase is LiveUpdatePhase.Finished) return null
@@ -198,22 +205,29 @@ object LiveUpdateTextFormatter {
         }
         val parts =
             listOfNotNull(
-                eta?.let { strings.string(R.string.live_update_sub_arrive, it) },
-                state.rideDuration?.let { duration ->
-                    val totalMinutes = duration.inWholeMinutes.toInt().coerceAtLeast(1)
-                    if (totalMinutes < 60) {
-                        strings.string(R.string.live_update_ride_minutes, totalMinutes)
-                    } else {
-                        strings.string(
-                            R.string.live_update_ride_hours,
-                            totalMinutes / 60,
-                            totalMinutes % 60,
-                        )
-                    }
+                eta?.let { strings.string(R.string.live_update_sub_eta, it) },
+                if (state.phase == LiveUpdatePhase.Riding) {
+                    strings.string(R.string.live_update_direction, state.headsign)
+                } else {
+                    rideDurationText(state, strings)
                 },
             )
         return parts.takeIf { it.isNotEmpty() }?.joinToString(SEPARATOR)
     }
+
+    private fun rideDurationText(state: LiveUpdateState, strings: StringLookup): String? =
+        state.rideDuration?.let { duration ->
+            val totalMinutes = duration.inWholeMinutes.toInt().coerceAtLeast(1)
+            if (totalMinutes < 60) {
+                strings.string(R.string.live_update_ride_minutes, totalMinutes)
+            } else {
+                strings.string(
+                    R.string.live_update_ride_hours,
+                    totalMinutes / 60,
+                    totalMinutes % 60,
+                )
+            }
+        }
 
     private const val SEPARATOR = " · "
 
