@@ -179,4 +179,31 @@ class TripTrackerTest {
         assertEquals("ok", result)
         assertEquals(2, attempts)
     }
+
+    @Test
+    fun `optional data that fails for good is left out instead of ending tracking`() = runTest {
+        // For example, schedules for an added trip.
+        var attempts = 0
+        val result =
+            TripTracker.optional<String>("schedules") {
+                attempts++
+                error(404)
+            }
+
+        assertNull(result)
+        assertEquals(1, attempts)
+    }
+
+    @Test
+    fun `optional data still retries until it loads`() = runTest {
+        var attempts = 0
+        val result =
+            TripTracker.optional("schedules") {
+                attempts++
+                if (attempts == 1) error(503) else ApiResult.Ok("ok")
+            }
+
+        assertEquals("ok", result)
+        assertEquals(2, attempts)
+    }
 }

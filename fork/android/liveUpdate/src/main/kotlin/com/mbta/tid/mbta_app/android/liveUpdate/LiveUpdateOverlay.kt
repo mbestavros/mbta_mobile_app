@@ -46,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -107,7 +108,9 @@ fun LiveUpdateOverlay(
     val tripState by tripDetailsViewModel.models.collectAsState()
     val stopDetailsState by stopDetailsViewModel.models.collectAsState()
     val page by remember {
-        derivedStateOf { OverlayPage.from(mapState, tripState, stopDetailsState) }
+        derivedStateOf(structuralEqualityPolicy()) {
+            OverlayPage.from(mapState, tripState, stopDetailsState)
+        }
     }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

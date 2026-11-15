@@ -72,9 +72,11 @@ class TripTracker(
                     return@flow
                 }
 
+        // Schedules are optional: predictions alone are enough, for example on an added trip.
         val schedules: Flow<TripSchedulesResponse?> = flow {
             emit(null)
-            emit(retrying("schedules") { tripRepository.getTripSchedules(request.tripId) })
+            optional("schedules") { tripRepository.getTripSchedules(request.tripId) }
+                ?.let { emit(it) }
         }
 
         // The filter can have no vehicle yet, or name a bus that is reassigned before the trip
@@ -231,6 +233,18 @@ class TripTracker(
                 }
             }
         }
+
+        /**
+         * Like [retrying], for data the tracker can do without: a permanent failure returns null
+         * instead of ending tracking.
+         */
+        suspend fun <T : Any> optional(name: String, block: suspend () -> ApiResult<T>): T? =
+            try {
+                retrying(name, block)
+            } catch (e: TripUnavailableException) {
+                Log.w(LIVE_UPDATE_TAG, "Going on without $name (${e.code})")
+                null
+            }
 
         private fun isPermanent(code: Int): Boolean = code in 400..499 && code != 408 && code != 429
 

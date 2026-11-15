@@ -152,15 +152,16 @@ internal data class OverlayPage(
             val stopDetailsFilter =
                 if (tripPageOpen) null
                 else StationPage.trackableFilter(isStopDetails, tripState, stopDetailsState)
+            val tripPageRouteId = tripData?.trip?.routeId
+            val stopDetailsRouteId =
+                if (stopDetailsFilter != null) tripState.tripData?.trip?.routeId else null
             return OverlayPage(
                 tripPageOpen = tripPageOpen,
                 trackableFilter =
                     TripPage.trackableFilter(tripPageOpen, tripState) ?: stopDetailsFilter,
                 pageTripId = tripData?.tripFilter?.tripId,
                 pageTargetStopId = tripData?.tripFilter?.stopId,
-                pageRouteId =
-                    tripData?.trip?.routeId
-                        ?: tripState.tripData?.trip?.routeId?.takeIf { stopDetailsFilter != null },
+                pageRouteId = tripPageRouteId ?: stopDetailsRouteId,
                 isStopDetails = isStopDetails,
                 stopDetailsStopId =
                     if (isStopDetails) StationPage.stopDetailsStopId(stopDetailsState) else null,

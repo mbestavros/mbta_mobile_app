@@ -15,6 +15,9 @@ object LiveUpdateSwitch {
     /**
      * True when tracking [filter] would end an ongoing Live Update, so the user should confirm it.
      * The service stops publishing a session once it finishes, so a session here is ongoing.
+     *
+     * The overlay only offers trips other than the tracked one, so the trip check never fails
+     * there. It is a guard: confirming a switch to the tracked trip would be meaningless.
      */
     fun needsConfirmation(session: LiveUpdateSession?, filter: TripDetailsPageFilter): Boolean =
         session != null && session.request.tripId != filter.tripId
