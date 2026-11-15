@@ -2,14 +2,17 @@ package com.mbta.tid.mbta_app.android.liveUpdate
 
 import com.mbta.tid.mbta_app.model.ObjectCollectionBuilder
 import com.mbta.tid.mbta_app.model.Route
+import com.mbta.tid.mbta_app.model.StopDetailsPageFilters
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import com.mbta.tid.mbta_app.model.stopDetailsPage.TripData
 import com.mbta.tid.mbta_app.viewModel.MapViewModel
+import com.mbta.tid.mbta_app.viewModel.StopDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.TripDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.TripDetailsViewModel.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TripPageTest {
@@ -66,5 +69,68 @@ class TripPageTest {
                 staleContext,
             ),
         )
+    }
+
+    private val overview =
+        MapViewModel.State(MapViewModel.LayerState.Overview, layersInitialized = true)
+
+    private fun stopDetails(stopId: String) =
+        StopDetailsViewModel.State(
+            routeData =
+                StopDetailsViewModel.RouteData.Unfiltered(
+                    StopDetailsPageFilters(stopId, null, null),
+                    emptyList(),
+                ),
+        )
+
+    @Test
+    fun `overlay page hides stale trip and stop details state on the entry screen`() {
+        val page =
+            OverlayPage.from(
+                overview,
+                state(filterA, Context.TripDetails),
+                stopDetails("place-pktrm"),
+            )
+
+        assertEquals(
+            OverlayPage(
+                tripPageOpen = false,
+                trackableFilter = null,
+                pageTripId = null,
+                pageTargetStopId = null,
+                pageRouteId = null,
+                isStopDetails = false,
+                stopDetailsStopId = null,
+                onEntryScreen = true,
+            ),
+            page,
+        )
+    }
+
+    @Test
+    fun `overlay page reads the stop of open stop details`() {
+        val map =
+            MapViewModel.State(
+                MapViewModel.LayerState.StopSelected(objects.stop { id = "place-pktrm" }, null),
+                layersInitialized = true,
+            )
+        val page =
+            OverlayPage.from(map, state(filterA, Context.StopDetails), stopDetails("place-pktrm"))
+
+        assertFalse(page.tripPageOpen)
+        assertNull(page.pageTripId)
+        assertTrue(page.isStopDetails)
+        assertEquals("place-pktrm", page.stopDetailsStopId)
+        assertFalse(page.onEntryScreen)
+    }
+
+    @Test
+    fun `overlay page is equal across prediction updates`() {
+        // derivedStateOf skips recomposition when the derived value is equal.
+        val before =
+            OverlayPage.from(overview, state(filterA, Context.TripDetails), stopDetails("a"))
+        val after =
+            OverlayPage.from(overview, state(filterA, Context.TripDetails), stopDetails("a"))
+        assertEquals(before, after)
     }
 }

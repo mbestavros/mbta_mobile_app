@@ -1,10 +1,7 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
@@ -33,7 +30,7 @@ class LiveUpdateController(private val context: Context) {
     fun track(filter: TripDetailsPageFilter) {
         if (_session.value?.request?.tripId == filter.tripId) return
         val request = LiveUpdateRequest.from(filter)
-        if (!canPostNotifications()) {
+        if (!LiveUpdateNotification.canPost(context)) {
             _pendingPermission.value = request
             return
         }
@@ -77,7 +74,7 @@ class LiveUpdateController(private val context: Context) {
         } catch (e: IllegalStateException) {
             // Starting a foreground service from the background is not allowed. The track tap is
             // a foreground action, so this is not expected.
-            Log.w("LiveUpdate", "Could not start the Live Update service", e)
+            Log.w(LIVE_UPDATE_TAG, "Could not start the Live Update service", e)
             _session.value = null
         }
     }
@@ -88,12 +85,7 @@ class LiveUpdateController(private val context: Context) {
         try {
             context.startService(intent)
         } catch (e: IllegalStateException) {
-            Log.w("LiveUpdate", "Could not send $action to the Live Update service", e)
+            Log.w(LIVE_UPDATE_TAG, "Could not send $action to the Live Update service", e)
         }
     }
-
-    private fun canPostNotifications(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
 }

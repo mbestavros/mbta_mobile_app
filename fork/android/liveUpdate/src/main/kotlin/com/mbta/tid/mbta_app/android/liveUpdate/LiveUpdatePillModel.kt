@@ -24,8 +24,12 @@ internal enum class PillKind {
  */
 internal object LiveUpdatePillModel {
     /** The route of the open trip page. Null until both the trip and the global data load. */
-    fun trackRoute(tripData: TripData?, global: GlobalResponse?): PillRoute? {
-        val routeId = tripData?.trip?.routeId ?: return null
+    fun trackRoute(tripData: TripData?, global: GlobalResponse?): PillRoute? =
+        trackRouteById(tripData?.trip?.routeId, global)
+
+    /** Like [trackRoute], with the trip's route ID already read (see [OverlayPage]). */
+    fun trackRouteById(routeId: Route.Id?, global: GlobalResponse?): PillRoute? {
+        if (routeId == null) return null
         return global?.getRoute(routeId)?.let { of(it, global) }
     }
 

@@ -2,7 +2,7 @@ package com.mbta.tid.mbta_app.android.liveUpdate
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import com.mbta.tid.mbta_app.android.MainActivity
 import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.response.GlobalResponse
@@ -86,5 +86,5 @@ object LiveUpdateDeepLink {
      * ACTION_VIEW intent. The explicit component keeps the official app from claiming the link.
      */
     fun intent(context: Context, path: String): Intent =
-        Intent(Intent.ACTION_VIEW, Uri.parse(path)).setClass(context, MainActivity::class.java)
+        Intent(Intent.ACTION_VIEW, path.toUri()).setClass(context, MainActivity::class.java)
 }

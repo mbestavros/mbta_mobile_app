@@ -1,12 +1,14 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
 import com.mbta.tid.mbta_app.model.Prediction
+import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.RoutePillSpec
 import com.mbta.tid.mbta_app.model.RouteType
 import com.mbta.tid.mbta_app.model.TripDetailsStopList
 import com.mbta.tid.mbta_app.model.Vehicle
 import com.mbta.tid.mbta_app.utils.EasternTimeInstant
 import kotlin.math.roundToInt
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -220,7 +222,7 @@ object LiveUpdateStateCalculator {
     }
 
     internal fun labelFor(
-        remaining: kotlin.time.Duration,
+        remaining: Duration,
         targetTime: EasternTimeInstant,
     ): LiveUpdateLabel =
         when {
@@ -252,7 +254,7 @@ object LiveUpdateStateCalculator {
         this?.scheduleRelationship == Prediction.ScheduleRelationship.Cancelled ||
             this?.scheduleRelationship == Prediction.ScheduleRelationship.Skipped
 
-    private fun com.mbta.tid.mbta_app.model.Route.displayName(): String =
+    private fun Route.displayName(): String =
         when (type) {
             RouteType.BUS -> shortName.ifEmpty { longName }
             else -> longName.ifEmpty { shortName }

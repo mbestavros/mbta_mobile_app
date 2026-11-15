@@ -28,7 +28,6 @@ import kotlinx.coroutines.isActive
  * The caller runs it only while MainActivity is started, so it doesn't poll in the background.
  */
 internal object LiveUpdateMapPin {
-    private const val TAG = "LiveUpdate"
     const val LAYER_ID = "live-update-destination-pin"
     private val CHECK_INTERVAL = 1.seconds
 
@@ -43,7 +42,7 @@ internal object LiveUpdateMapPin {
                 )
                 .lastOrNull { it.id.endsWith("-selected-pin") }
         if (upstream == null) {
-            Log.w(TAG, "No selected pin layer in StopLayerGenerator")
+            Log.w(LIVE_UPDATE_TAG, "No selected pin layer in StopLayerGenerator")
             return null
         }
         return upstream.withId(LAYER_ID)
@@ -53,6 +52,7 @@ internal object LiveUpdateMapPin {
     suspend fun keepShown(activity: Activity, stationId: String, colorPalette: ColorPalette) {
         val layer = pinLayer(stationId, colorPalette)?.toMapbox() ?: return
         var warned = false
+        var addWarned = false
         // Walking the view tree every second is wasteful. Search again only if the view is gone.
         var mapView = findMapView(activity.window.decorView)
         // Replace a layer left by a previous station or color palette.
@@ -65,7 +65,7 @@ internal object LiveUpdateMapPin {
             }
             val map = mapView?.mapboxMap
             if (map == null) {
-                if (!warned) Log.w(TAG, "No MapView for the destination pin")
+                if (!warned) Log.w(LIVE_UPDATE_TAG, "No MapView for the destination pin")
                 warned = true
             } else if (
                 !map.styleLayerExists(LAYER_ID) &&
@@ -77,7 +77,11 @@ internal object LiveUpdateMapPin {
                     try {
                         map.addLayerBelow(layer, below = MapLayerManager.puckAnchorLayerId)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Could not add the destination pin", e)
+                        // This retries every second, so log a persistent failure only once.
+                        if (!addWarned) {
+                            Log.w(LIVE_UPDATE_TAG, "Could not add the destination pin", e)
+                        }
+                        addWarned = true
                     }
                 }
             }

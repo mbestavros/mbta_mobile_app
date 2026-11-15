@@ -51,6 +51,11 @@ object LiveUpdateWatchdog {
 
     val CHECK_INTERVAL = 1.minutes
     val FIRST_DATA_TIMEOUT = 2.minutes
+    /**
+     * A restored session gets longer for its first data: the process may restart while the phone is
+     * still offline. But a trip that never loads must not poll until [MAX_DURATION].
+     */
+    val RESTORED_FIRST_DATA_TIMEOUT = 10.minutes
     /** Three missed Phoenix heartbeats (30 s each). */
     val FRAME_STALE_AFTER = 90.seconds
     val MAX_RECONNECT_INTERVAL = 10.minutes
@@ -62,9 +67,9 @@ object LiveUpdateWatchdog {
 
     fun decide(input: Input): Action {
         if (input.totalDuration > MAX_DURATION) return Action.FinishMaxDuration
-        if (
-            input.sinceLastData == null && !input.restored && input.sinceStart > FIRST_DATA_TIMEOUT
-        ) {
+        val firstDataTimeout =
+            if (input.restored) RESTORED_FIRST_DATA_TIMEOUT else FIRST_DATA_TIMEOUT
+        if (input.sinceLastData == null && input.sinceStart > firstDataTimeout) {
             return Action.FinishNoData
         }
         val silent = input.sinceLastFrame ?: input.sinceStart

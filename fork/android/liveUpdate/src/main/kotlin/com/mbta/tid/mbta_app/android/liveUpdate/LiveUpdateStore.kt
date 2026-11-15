@@ -3,9 +3,9 @@ package com.mbta.tid.mbta_app.android.liveUpdate
 import android.content.Context
 import android.util.Log
 import com.mbta.tid.mbta_app.utils.EasternTimeInstant
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.datetime.LocalDateTime
 import org.json.JSONArray
-import org.json.JSONException
 import org.json.JSONObject
 
 /** What the service learned while tracking. It survives a reconnect and a process restart. */
@@ -14,6 +14,21 @@ data class TrackingProgress(
     val wasOnTrip: Boolean = false,
     val boardingTime: EasternTimeInstant? = null,
 )
+
+/**
+ * True if this progress differs enough from [saved] to write it again. The anchor and the trip flag
+ * always count. The boarding time moves with nearly every prediction for the boarding stop, so it
+ * counts only when it appears, disappears, or moves by [BOARDING_TIME_SAVE_STEP] or more.
+ */
+internal fun TrackingProgress.needsSave(saved: TrackingProgress): Boolean {
+    if (anchor != saved.anchor || wasOnTrip != saved.wasOnTrip) return true
+    val time = boardingTime
+    val savedTime = saved.boardingTime
+    if (time == null || savedTime == null) return (time == null) != (savedTime == null)
+    return (time - savedTime).absoluteValue >= BOARDING_TIME_SAVE_STEP
+}
+
+private val BOARDING_TIME_SAVE_STEP = 1.minutes
 
 /** A tracking session as saved to disk. */
 data class SavedSession(
@@ -38,8 +53,11 @@ class LiveUpdateStore(context: Context) {
         val json = prefs.getString(KEY_SESSION, null) ?: return null
         return try {
             decode(JSONObject(json))
-        } catch (e: JSONException) {
-            Log.w(TAG, "Dropping an unreadable saved session", e)
+        } catch (e: Exception) {
+            // JSONException (a checked exception on Android), or a NumberFormatException from a
+            // bad stop-name key. A sticky restart reads this on every start, so a bad file must
+            // not crash.
+            Log.w(LIVE_UPDATE_TAG, "Dropping an unreadable saved session", e)
             clear()
             null
         }
@@ -50,7 +68,6 @@ class LiveUpdateStore(context: Context) {
     }
 
     companion object {
-        private const val TAG = "LiveUpdate"
         private const val PREFS_NAME = "live_update_session"
         private const val KEY_SESSION = "session"
 

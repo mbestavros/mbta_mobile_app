@@ -1,5 +1,6 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
+import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import com.mbta.tid.mbta_app.model.response.GlobalResponse
 import com.mbta.tid.mbta_app.viewModel.MapViewModel
@@ -61,15 +62,73 @@ object StationPage {
         stopDetailsState: StopDetailsViewModel.State,
         stationIds: Set<String>,
         global: GlobalResponse?,
+    ): Boolean = isOpen(isStopDetails, stopDetailsStopId(stopDetailsState), stationIds, global)
+
+    /** Like the other [isOpen], with the page's stop ID already read (see [stopDetailsStopId]). */
+    fun isOpen(
+        isStopDetails: Boolean,
+        stopDetailsStopId: String?,
+        stationIds: Set<String>,
+        global: GlobalResponse?,
     ): Boolean {
         if (!isStopDetails) return false
-        val stopId = stopDetailsState.routeData?.filters?.stopId ?: return false
+        val stopId = stopDetailsStopId ?: return false
         return LiveUpdateDeepLink.stationId(stopId, global) in stationIds
     }
+
+    /** The stop of the stop details page, or null until its route data loads. */
+    fun stopDetailsStopId(stopDetailsState: StopDetailsViewModel.State): String? =
+        stopDetailsState.routeData?.filters?.stopId
 
     /** The boarding station and, with a destination, the destination station. */
     fun trackedStationIds(request: LiveUpdateRequest, global: GlobalResponse?): Set<String> =
         listOfNotNull(request.stopId, request.destinationStopId)
             .map { LiveUpdateDeepLink.stationId(it, global) }
             .toSet()
+}
+
+/**
+ * What the overlay needs from upstream's page view models. The trip and stop details models change
+ * on every prediction, but these few values rarely do. The overlay reads the models only through
+ * this class (in derivedStateOf), so a prediction push recomposes it only when a value here
+ * changes.
+ *
+ * The trip page fields are null while the trip page is closed, and [stopDetailsStopId] is null
+ * while stop details is closed.
+ */
+internal data class OverlayPage(
+    val tripPageOpen: Boolean,
+    /** The trip page's filter, once the page can be tracked (see [TripPage.trackableFilter]). */
+    val trackableFilter: TripDetailsPageFilter?,
+    val pageTripId: String?,
+    /** The stop that the trip page targets. */
+    val pageTargetStopId: String?,
+    val pageRouteId: Route.Id?,
+    val isStopDetails: Boolean,
+    val stopDetailsStopId: String?,
+    /** The map entry screen (or the More page, which looks the same here). */
+    val onEntryScreen: Boolean,
+) {
+    companion object {
+        fun from(
+            mapState: MapViewModel.State,
+            tripState: TripDetailsViewModel.State,
+            stopDetailsState: StopDetailsViewModel.State,
+        ): OverlayPage {
+            val tripPageOpen = TripPage.isOpen(mapState, tripState)
+            val tripData = tripState.tripData?.takeIf { tripPageOpen }
+            val isStopDetails = StationPage.isStopDetails(mapState, tripState)
+            return OverlayPage(
+                tripPageOpen = tripPageOpen,
+                trackableFilter = TripPage.trackableFilter(tripPageOpen, tripState),
+                pageTripId = tripData?.tripFilter?.tripId,
+                pageTargetStopId = tripData?.tripFilter?.stopId,
+                pageRouteId = tripData?.trip?.routeId,
+                isStopDetails = isStopDetails,
+                stopDetailsStopId =
+                    if (isStopDetails) StationPage.stopDetailsStopId(stopDetailsState) else null,
+                onEntryScreen = mapState.layerState is MapViewModel.LayerState.Overview,
+            )
+        }
+    }
 }

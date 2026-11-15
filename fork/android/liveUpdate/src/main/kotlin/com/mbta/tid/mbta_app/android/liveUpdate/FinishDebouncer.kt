@@ -12,14 +12,21 @@ import kotlin.time.Duration.Companion.seconds
  * The 15-second ticker re-emits the same snapshot, which doesn't count as a new one.
  */
 class FinishDebouncer(private val confirmAfter: Duration = 20.seconds) {
-    private class Pending(val reason: FinishReason, val sinceMs: Long, var lastSnapshot: Any) {
+    private class Pending(
+        val reason: FinishReason,
+        val sinceMs: Long,
+        var lastSnapshot: TrackerSnapshot,
+    ) {
         var count = 1
     }
 
     private var pending: Pending? = null
 
-    /** Returns true when tracking should finish now. */
-    fun shouldFinish(phase: LiveUpdatePhase, snapshot: Any, nowMs: Long): Boolean {
+    /**
+     * Returns true when tracking should finish now. Snapshots are compared by identity: the ticker
+     * re-emits the same instance, and only a new instance counts as a new update.
+     */
+    fun shouldFinish(phase: LiveUpdatePhase, snapshot: TrackerSnapshot, nowMs: Long): Boolean {
         if (phase !is LiveUpdatePhase.Finished) {
             pending = null
             return false

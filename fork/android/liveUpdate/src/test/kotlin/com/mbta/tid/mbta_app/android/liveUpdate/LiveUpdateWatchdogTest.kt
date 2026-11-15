@@ -107,6 +107,37 @@ class LiveUpdateWatchdogTest {
     }
 
     @Test
+    fun `a restored session gets a longer first data timeout`() {
+        assertEquals(
+            Action.None,
+            LiveUpdateWatchdog.decide(
+                input(sinceStart = 9.minutes, sinceLastData = null, restored = true),
+            ),
+        )
+    }
+
+    @Test
+    fun `a restored session that never loads finishes`() {
+        // Heartbeats keep the socket fresh, so only this check ends a dead restored trip.
+        assertEquals(
+            Action.FinishNoData,
+            LiveUpdateWatchdog.decide(
+                input(sinceStart = 11.minutes, sinceLastData = null, restored = true),
+            ),
+        )
+    }
+
+    @Test
+    fun `a restored session with data is not finished for lack of data`() {
+        assertEquals(
+            Action.None,
+            LiveUpdateWatchdog.decide(
+                input(sinceStart = 60.minutes, sinceLastData = 10.seconds, restored = true),
+            ),
+        )
+    }
+
+    @Test
     fun `stale data long after the target time finishes`() {
         assertEquals(
             Action.FinishLostConnection,

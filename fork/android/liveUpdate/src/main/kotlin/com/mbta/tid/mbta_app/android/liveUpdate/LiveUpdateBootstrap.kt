@@ -8,21 +8,33 @@ import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.dsl.module
 
+/**
+ * Wires the feature into the app once Koin is up. The initializer and the service both call
+ * [start], always on the main thread.
+ */
 object LiveUpdateBootstrap {
-    private const val TAG = "LiveUpdate"
     private const val RETRY_DELAY_MS = 50L
     private const val MAX_ATTEMPTS = 100
 
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
+    /** True while a retry is posted, so a second caller doesn't start a second retry chain. */
+    private var retryScheduled = false
 
-    fun start(application: Application, attempt: Int = 0) {
+    fun start(application: Application) {
+        if (started || retryScheduled) return
+        tryStart(application, attempt = 0)
+    }
+
+    private fun tryStart(application: Application, attempt: Int) {
+        retryScheduled = false
         if (started) return
         if (GlobalContext.getOrNull() == null) {
             if (attempt < MAX_ATTEMPTS) {
-                handler.postDelayed({ start(application, attempt + 1) }, RETRY_DELAY_MS)
+                retryScheduled = true
+                handler.postDelayed({ tryStart(application, attempt + 1) }, RETRY_DELAY_MS)
             } else {
-                Log.w(TAG, "Koin did not start; Live Updates are off")
+                Log.w(LIVE_UPDATE_TAG, "Koin did not start; Live Updates are off")
             }
             return
         }

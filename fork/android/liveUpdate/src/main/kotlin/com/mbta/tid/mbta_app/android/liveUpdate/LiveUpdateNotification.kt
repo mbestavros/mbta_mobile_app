@@ -1,16 +1,19 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
-import androidx.core.graphics.toColorInt
 import com.mbta.tid.mbta_app.android.R
 import com.mbta.tid.mbta_app.model.RoutePillSpec
 import com.mbta.tid.mbta_app.model.RouteType
@@ -26,8 +29,20 @@ object LiveUpdateNotification {
     const val ONGOING_ID = 4_001
     const val FINAL_ID = 4_002
     const val RESUME_ID = 4_003
+
+    // PendingIntent request codes. Different codes keep the intents apart.
+    private const val REQUEST_OPEN = 0
+    private const val REQUEST_STOP = 1
+    private const val REQUEST_DISMISSED = 2
+    private const val REQUEST_RESUME = 3
     private const val FINAL_TIMEOUT_MS = 60_000L
     private const val RESUME_TIMEOUT_MS = 30 * 60_000L
+
+    /** True if the app may post notifications (Android 13 and later need the permission). */
+    fun canPost(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
 
     fun ensureChannel(context: Context) {
         val channel =
@@ -47,7 +62,7 @@ object LiveUpdateNotification {
 
     /** Shown at once when the service starts, before any data arrives. */
     fun placeholder(context: Context): Notification =
-        baseBuilder(context)
+        baseBuilder(context, openAppIntent(context))
             .setContentTitle(context.getString(R.string.live_update_placeholder_title))
             .setContentText(context.getString(R.string.live_update_placeholder_text))
             .setStyle(NotificationCompat.ProgressStyle().setProgressIndeterminate(true))
@@ -100,16 +115,15 @@ object LiveUpdateNotification {
         text: LiveUpdateText,
         deepLinkPath: String?,
     ): Notification {
-        val color = parseColor(state.routeColor)
+        val color = parseRouteColor(state.routeColor)
         val builder =
-            baseBuilder(context)
+            baseBuilder(context, openAppIntent(context, deepLinkPath))
                 .setContentTitle(text.title)
                 .setContentText(text.text)
                 .setSubText(text.subText)
                 .setShortCriticalText(text.chip)
                 .setStyle(progressStyle(context, state, color))
         state.routePill?.let { builder.setLargeIcon(badge(context, it)) }
-        if (deepLinkPath != null) builder.setContentIntent(openAppIntent(context, deepLinkPath))
 
         val clockTime = (state.label as? LiveUpdateLabel.ClockTime)?.time
         if (clockTime != null) {
@@ -145,7 +159,7 @@ object LiveUpdateNotification {
             .setContentIntent(
                 PendingIntent.getForegroundService(
                     context,
-                    3,
+                    REQUEST_RESUME,
                     Intent(context, LiveUpdateService::class.java)
                         .setAction(LiveUpdateService.ACTION_RESUME),
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -156,7 +170,10 @@ object LiveUpdateNotification {
             .setTimeoutAfter(RESUME_TIMEOUT_MS)
             .build()
 
-    private fun baseBuilder(context: Context): NotificationCompat.Builder =
+    private fun baseBuilder(
+        context: Context,
+        contentIntent: PendingIntent?,
+    ): NotificationCompat.Builder =
         NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.app_icon_monochrome)
             .setOngoing(true)
@@ -165,15 +182,30 @@ object LiveUpdateNotification {
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .setContentIntent(openAppIntent(context))
-            .setDeleteIntent(serviceIntent(context, LiveUpdateService.ACTION_DISMISSED, 2))
-            .addAction(
-                0,
-                context.getString(R.string.live_update_action_stop),
-                serviceIntent(context, LiveUpdateService.ACTION_STOP, 1),
-            )
+            .setContentIntent(contentIntent)
+            .setDeleteIntent(dismissedIntent(context))
+            .addAction(0, context.getString(R.string.live_update_action_stop), stopIntent(context))
 
-    /** One route per session, so keep the last badges instead of drawing them on every post. */
+    // The Stop and Dismissed intents never change, so build them once instead of on every post.
+    @Volatile private var stopIntent: PendingIntent? = null
+    @Volatile private var dismissedIntent: PendingIntent? = null
+
+    private fun stopIntent(context: Context): PendingIntent =
+        stopIntent
+            ?: serviceIntent(context, LiveUpdateService.ACTION_STOP, REQUEST_STOP).also {
+                stopIntent = it
+            }
+
+    private fun dismissedIntent(context: Context): PendingIntent =
+        dismissedIntent
+            ?: serviceIntent(context, LiveUpdateService.ACTION_DISMISSED, REQUEST_DISMISSED).also {
+                dismissedIntent = it
+            }
+
+    /**
+     * One route per session, so keep the last badges instead of drawing them on every post. Only
+     * the service's main thread builds notifications, so these need no locking.
+     */
     private var badgeCache: Pair<RoutePillSpec, Bitmap>? = null
     private var trackerCache: Pair<Pair<RouteType, String>, Bitmap>? = null
 
@@ -221,7 +253,13 @@ object LiveUpdateNotification {
         return style
     }
 
-    /** With [deepLinkPath], MainActivity opens stop details with the trip selected. */
+    /**
+     * With [deepLinkPath], MainActivity opens stop details with the trip selected.
+     *
+     * The system tells PendingIntents apart by their data URI too, so each distinct path is its own
+     * entry, even with one request code. A session uses about two paths (boarding, then aboard), so
+     * this is bounded.
+     */
     private fun openAppIntent(context: Context, deepLinkPath: String? = null): PendingIntent? {
         val intent =
             if (deepLinkPath != null) {
@@ -232,26 +270,21 @@ object LiveUpdateNotification {
         intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(
             context,
-            0,
+            REQUEST_OPEN,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
     }
 
-    private fun serviceIntent(context: Context, action: String, requestCode: Int): PendingIntent =
-        PendingIntent.getService(
-            context,
+    private fun serviceIntent(context: Context, action: String, requestCode: Int): PendingIntent {
+        val app = context.applicationContext
+        return PendingIntent.getService(
+            app,
             requestCode,
-            Intent(context, LiveUpdateService::class.java).setAction(action),
+            Intent(app, LiveUpdateService::class.java).setAction(action),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-
-    private fun parseColor(hex: String): Int? =
-        try {
-            "#$hex".toColorInt()
-        } catch (e: IllegalArgumentException) {
-            null
-        }
+    }
 
     /** EasternTimeInstant does not expose epoch time, so offset it from the current time. */
     private fun epochMillis(time: EasternTimeInstant): Long =

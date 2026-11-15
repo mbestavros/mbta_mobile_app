@@ -5,9 +5,9 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import android.util.Log
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Records why tracking ended or reconnected, and why the process died, so that a vanished Live
@@ -20,8 +20,8 @@ class LiveUpdateDiagnostics(private val context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun record(event: String) {
-        Log.i(TAG, event)
-        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        Log.i(LIVE_UPDATE_TAG, event)
+        val stamp = STAMP_FORMAT.format(Instant.now())
         val entries = entries() + "$stamp $event"
         prefs.edit().putString(KEY_LOG, entries.takeLast(MAX_ENTRIES).joinToString("\n")).apply()
     }
@@ -38,14 +38,14 @@ class LiveUpdateDiagnostics(private val context: Context) {
             try {
                 am.getHistoricalProcessExitReasons(context.packageName, 0, MAX_EXITS)
             } catch (e: RuntimeException) {
-                Log.w(TAG, "Could not read process exit reasons", e)
+                Log.w(LIVE_UPDATE_TAG, "Could not read process exit reasons", e)
                 return
             }
         val newExits = exits.filter { it.timestamp > lastSeen }.sortedBy { it.timestamp }
         if (newExits.isEmpty()) return
         prefs.edit().putLong(KEY_LAST_EXIT, newExits.maxOf { it.timestamp }).apply()
         for (exit in newExits) {
-            val at = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(exit.timestamp))
+            val at = TIME_FORMAT.format(Instant.ofEpochMilli(exit.timestamp))
             record(
                 "process_exit at=$at reason=${reasonName(exit.reason)} " +
                     "importance=${exit.importance} sessionSaved=$sessionSaved " +
@@ -72,7 +72,12 @@ class LiveUpdateDiagnostics(private val context: Context) {
         }
 
     private companion object {
-        const val TAG = "LiveUpdate"
+        // DateTimeFormatter is immutable and thread-safe, unlike SimpleDateFormat. The zone is
+        // read once per process, which is fine for a debug log.
+        val STAMP_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault())
+        val TIME_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
         const val PREFS_NAME = "live_update_diagnostics"
         const val KEY_LOG = "log"
         const val KEY_LAST_EXIT = "lastExitTimestamp"

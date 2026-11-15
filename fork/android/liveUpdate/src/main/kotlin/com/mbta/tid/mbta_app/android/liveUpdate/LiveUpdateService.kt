@@ -1,13 +1,12 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
-import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
@@ -63,8 +62,14 @@ class LiveUpdateService : Service() {
     private val finishDebouncer = FinishDebouncer()
 
     private var progress = TrackingProgress()
+    /** The progress last written to [store]. See [TrackingProgress.needsSave]. */
+    private var savedProgress = TrackingProgress()
     /** Wall-clock start of the session, kept across restores. */
     private var startedAtMs = 0L
+    /**
+     * True if this session was restored after the process died. The watchdog reads it only until
+     * the first snapshot arrives (see [LiveUpdateWatchdog.decide]), so it is never reset.
+     */
     private var restored = false
     // SystemClock.elapsedRealtime values. They keep counting while the phone sleeps.
     private var sessionStartElapsed = 0L
@@ -82,7 +87,10 @@ class LiveUpdateService : Service() {
     private var screenOnReceiver: BroadcastReceiver? = null
 
     private val controller: LiveUpdateController?
-        get() = GlobalContext.getOrNull()?.getOrNull()
+        get() = koinOrNull()?.getOrNull()
+
+    /** The app's Koin, or null before MainApplication starts it. */
+    private fun koinOrNull() = GlobalContext.getOrNull()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -100,7 +108,7 @@ class LiveUpdateService : Service() {
                 // A service started with startForegroundService must call startForeground soon.
                 startInForeground(LiveUpdateNotification.placeholder(this))
                 val newRequest = LiveUpdateRequest.readFrom(intent)
-                if (newRequest == null || GlobalContext.getOrNull() == null) {
+                if (newRequest == null || koinOrNull() == null) {
                     finish(null, "start_invalid")
                 } else {
                     startSession(
@@ -157,7 +165,7 @@ class LiveUpdateService : Service() {
 
     private fun restoreAfterRestart(startId: Int) {
         val saved = loadFreshSession()
-        if (saved == null || GlobalContext.getOrNull() == null) {
+        if (saved == null || koinOrNull() == null) {
             stopSelf(startId)
             return
         }
@@ -177,7 +185,7 @@ class LiveUpdateService : Service() {
 
     private fun resumeSaved(event: String): Boolean {
         val saved = loadFreshSession() ?: return false
-        if (GlobalContext.getOrNull() == null) return false
+        if (koinOrNull() == null) return false
         diagnostics.record("$event trip=${saved.request.tripId}")
         startSession(saved.request, saved.progress, saved.startedAtMs, isRestore = true)
         return true
@@ -230,11 +238,13 @@ class LiveUpdateService : Service() {
     /** Opens a new socket and restarts the snapshot collection. [reason] is null on first open. */
     private fun connect(reason: String?) {
         val currentRequest = request.value ?: return
-        val koin = GlobalContext.getOrNull()
+        val koin = koinOrNull()
         if (koin == null) {
             finish(null, "no_koin")
             return
         }
+        // The cancelled flows disconnect their channels in awaitClose, after close() did. That is
+        // safe: upstream's disconnect does nothing the second time.
         dataJob?.cancel()
         connection?.close()
         val sessionStats = stats
@@ -256,8 +266,25 @@ class LiveUpdateService : Service() {
                     "sinceData=${sinceLastData()?.inWholeSeconds}s",
             )
         }
-        val tracker = TripTracker(newConnection, koin.get(), koin.get(), stats)
-        dataJob = scope.launch { collectSnapshots(tracker, currentRequest) }
+        val tracker =
+            TripTracker(
+                newConnection.tripPredictions,
+                newConnection.vehicle,
+                koin.get(),
+                koin.get(),
+                stats,
+            )
+        dataJob = scope.launch {
+            try {
+                collectSnapshots(tracker, currentRequest)
+            } catch (e: TripUnavailableException) {
+                // The backend rejected the trip, for example because it no longer exists.
+                finish(
+                    plainText(R.string.live_update_finished_no_data),
+                    "trip_unavailable:${e.name}:${e.code}",
+                )
+            }
+        }
     }
 
     private suspend fun collectSnapshots(tracker: TripTracker, initialRequest: LiveUpdateRequest) {
@@ -302,7 +329,9 @@ class LiveUpdateService : Service() {
                         wasOnTrip = before.wasOnTrip || snapshot.vehicleOnTrip != null,
                         boardingTime = state.boardingTime,
                     )
-                if (progress != before) saveSession()
+                // The boarding time moves with every prediction. A slightly stale one only
+                // affects the ride duration after a restore, so don't rewrite the file for it.
+                if (progress.needsSave(savedProgress)) saveSession()
                 lastTargetTime = state.eta ?: state.targetTime ?: lastTargetTime
 
                 val phase = state.phase
@@ -417,7 +446,7 @@ class LiveUpdateService : Service() {
                 connectivity.registerDefaultNetworkCallback(callback)
                 networkCallback = callback
             } catch (e: RuntimeException) {
-                Log.w(TAG, "Could not watch the network", e)
+                Log.w(LIVE_UPDATE_TAG, "Could not watch the network", e)
             }
         }
 
@@ -469,6 +498,7 @@ class LiveUpdateService : Service() {
     private fun saveSession() {
         val current = request.value ?: return
         store.save(SavedSession(current, progress, startedAtMs))
+        savedProgress = progress
     }
 
     private fun finishBoardingPassed(snapshot: TrackerSnapshot, request: LiveUpdateRequest) {
@@ -521,14 +551,10 @@ class LiveUpdateService : Service() {
         stopSelf()
     }
 
+    // canPost checks POST_NOTIFICATIONS, but lint can't see through the helper.
+    @SuppressLint("MissingPermission")
     private fun post(id: Int, notification: Notification) {
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-                    PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        if (!LiveUpdateNotification.canPost(this)) return
         NotificationManagerCompat.from(this).notify(id, notification)
     }
 
@@ -539,7 +565,6 @@ class LiveUpdateService : Service() {
         const val ACTION_STOP = "com.mbta.tid.mbta_app.android.liveUpdate.STOP"
         const val ACTION_DISMISSED = "com.mbta.tid.mbta_app.android.liveUpdate.DISMISSED"
 
-        private const val TAG = "LiveUpdate"
         private val TICK_INTERVAL = 15.seconds
     }
 }

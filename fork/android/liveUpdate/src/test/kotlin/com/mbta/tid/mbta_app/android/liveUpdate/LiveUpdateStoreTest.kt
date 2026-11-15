@@ -1,10 +1,15 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
 import android.app.Application
+import android.content.Context
 import com.mbta.tid.mbta_app.utils.EasternTimeInstant
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.datetime.Month
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -78,5 +83,55 @@ class LiveUpdateStoreTest {
         store.clear()
 
         assertNull(store.load())
+    }
+
+    @Test
+    fun `drops invalid JSON`() {
+        assertDropped("{not json")
+    }
+
+    @Test
+    fun `drops a non-numeric stop name key`() {
+        val json =
+            LiveUpdateStore.encode(SavedSession(request, TrackingProgress(anchor = anchor), 1L))
+        json.getJSONObject("anchor").getJSONObject("stopNames").put("abc", "Bad")
+        assertDropped(json.toString())
+    }
+
+    @Test
+    fun `drops a session without a request`() {
+        assertDropped("""{"startedAtMs": 1}""")
+    }
+
+    @Test
+    fun `needsSave ignores small boarding time moves`() {
+        val time = EasternTimeInstant(2026, Month.NOVEMBER, 12, 8, 5)
+        val saved = TrackingProgress(anchor, wasOnTrip = false, boardingTime = time)
+
+        assertFalse(saved.needsSave(saved))
+        assertFalse(saved.copy(boardingTime = time + 59.seconds).needsSave(saved))
+        assertFalse(saved.copy(boardingTime = time - 59.seconds).needsSave(saved))
+        assertTrue(saved.copy(boardingTime = time + 1.minutes).needsSave(saved))
+        assertTrue(saved.copy(boardingTime = time - 2.minutes).needsSave(saved))
+    }
+
+    @Test
+    fun `needsSave always saves anchor, trip flag and boarding time presence`() {
+        val time = EasternTimeInstant(2026, Month.NOVEMBER, 12, 8, 5)
+        val saved = TrackingProgress(anchor = null, wasOnTrip = false, boardingTime = null)
+
+        assertTrue(saved.copy(anchor = anchor).needsSave(saved))
+        assertTrue(saved.copy(wasOnTrip = true).needsSave(saved))
+        assertTrue(saved.copy(boardingTime = time).needsSave(saved))
+        assertTrue(saved.needsSave(saved.copy(boardingTime = time)))
+    }
+
+    private fun assertDropped(raw: String) {
+        val app = RuntimeEnvironment.getApplication()
+        val prefs = app.getSharedPreferences("live_update_session", Context.MODE_PRIVATE)
+        prefs.edit().putString("session", raw).commit()
+
+        assertNull(LiveUpdateStore(app).load())
+        assertFalse(prefs.contains("session"))
     }
 }

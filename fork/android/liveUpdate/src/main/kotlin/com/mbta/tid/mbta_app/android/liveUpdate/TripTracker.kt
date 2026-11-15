@@ -10,7 +10,9 @@ import com.mbta.tid.mbta_app.model.response.PredictionsStreamDataResponse
 import com.mbta.tid.mbta_app.model.response.TripSchedulesResponse
 import com.mbta.tid.mbta_app.repositories.ErrorKey
 import com.mbta.tid.mbta_app.repositories.IGlobalRepository
+import com.mbta.tid.mbta_app.repositories.ITripPredictionsRepository
 import com.mbta.tid.mbta_app.repositories.ITripRepository
+import com.mbta.tid.mbta_app.repositories.IVehicleRepository
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,20 +34,31 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Thrown by [TripTracker.snapshots] when the backend says the trip can't load (a 4xx other than 408
+ * or 429), for example because the trip no longer exists. Retrying would not help.
+ */
+internal class TripUnavailableException(val name: String, val code: Int) :
+    RuntimeException("Loading $name failed with $code")
+
+/**
  * Loads a trip the same way as the trip page (see getTripData and getTripDetailsStopList in
  * shared), but without Compose or Molecule, so that it keeps running while the screen is off.
+ *
+ * The channel repositories come from the service's own socket (see [LiveUpdateConnection]).
  */
 class TripTracker(
-    private val connection: LiveUpdateConnection,
+    private val tripPredictions: ITripPredictionsRepository,
+    private val vehicleRepository: IVehicleRepository,
     private val tripRepository: ITripRepository,
     private val globalRepository: IGlobalRepository,
     private val stats: LiveUpdateStats? = null,
 ) {
-    private val errorKey = ErrorKey(emptySet(), "LiveUpdate")
+    private val errorKey = ErrorKey(emptySet(), LIVE_UPDATE_TAG)
 
     // Alerts are not shown in the notification yet. fromPieces needs a non-null value.
     private val noAlerts = AlertsStreamDataResponse(emptyMap())
 
+    /** Throws [TripUnavailableException] if the trip can't load. */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun snapshots(request: LiveUpdateRequest): Flow<TrackerSnapshot> = flow {
         val global =
@@ -55,7 +68,7 @@ class TripTracker(
             global.getRoute(trip.routeId)
                 ?: global.getRoute(Route.Id(request.routeId))
                 ?: run {
-                    Log.w(TAG, "Trip ${trip.id} on unknown route ${trip.routeId}")
+                    Log.w(LIVE_UPDATE_TAG, "Trip ${trip.id} on unknown route ${trip.routeId}")
                     return@flow
                 }
 
@@ -101,11 +114,14 @@ class TripTracker(
         emitAll(snapshots)
     }
 
+    // Both channels disconnect in awaitClose, after LiveUpdateConnection.close() may have done so
+    // already. Upstream's disconnect detaches under a lock and nulls the channel, so a second call
+    // does nothing.
     private fun predictionUpdates(tripId: String): Flow<PredictionsStreamDataResponse> =
         callbackFlow {
             lateinit var reconnector: Reconnector
             fun connect() {
-                connection.tripPredictions.connect(tripId, errorKey) { result ->
+                tripPredictions.connect(tripId, errorKey) { result ->
                     when (result) {
                         is ApiResult.Ok -> {
                             stats?.predictionMessages?.incrementAndGet()
@@ -117,13 +133,13 @@ class TripTracker(
             }
             reconnector = Reconnector(this, ::connect)
             connect()
-            awaitClose { connection.tripPredictions.disconnect() }
+            awaitClose { tripPredictions.disconnect() }
         }
 
     private fun vehicleUpdates(vehicleId: String): Flow<Vehicle?> = callbackFlow {
         lateinit var reconnector: Reconnector
         fun connect() {
-            connection.vehicle.connect(vehicleId, errorKey) { result ->
+            vehicleRepository.connect(vehicleId, errorKey) { result ->
                 when (result) {
                     is ApiResult.Ok -> {
                         stats?.vehicleMessages?.incrementAndGet()
@@ -137,7 +153,7 @@ class TripTracker(
         // Don't block the snapshots while the vehicle channel joins.
         trySend(null)
         connect()
-        awaitClose { connection.vehicle.disconnect() }
+        awaitClose { vehicleRepository.disconnect() }
     }
 
     /**
@@ -145,12 +161,12 @@ class TripTracker(
      * connect tears down the channel first, so a burst of errors must not stack up reconnects.
      * Errors come from socket callbacks, so this is synchronized.
      */
-    private class Reconnector(private val scope: CoroutineScope, private val connect: () -> Unit) {
+    internal class Reconnector(private val scope: CoroutineScope, private val connect: () -> Unit) {
         private var pending: Job? = null
 
         @Synchronized
         fun onError(channel: String, error: ApiResult.Error<*>) {
-            Log.w(TAG, "$channel error: $error")
+            Log.w(LIVE_UPDATE_TAG, "$channel error: $error")
             // One bad message does not break the channel. Rejoining would not fix it.
             if (error.message.startsWith(PARSE_ERROR_PREFIX)) return
             if (pending?.isActive == true) return
@@ -161,31 +177,10 @@ class TripTracker(
         }
     }
 
-    private suspend fun <T : Any> retrying(name: String, block: suspend () -> ApiResult<T>): T {
-        var delayMs = 2_000L
-        while (true) {
-            val result =
-                try {
-                    block()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    ApiResult.Error(message = e.toString())
-                }
-            when (result) {
-                is ApiResult.Ok -> return result.data
-                is ApiResult.Error -> {
-                    Log.w(TAG, "Loading $name failed, retrying in $delayMs ms: $result")
-                    delay(delayMs)
-                    delayMs = (delayMs * 2).coerceAtMost(60_000L)
-                }
-            }
-        }
-    }
-
-    private companion object {
-        const val TAG = "LiveUpdate"
+    internal companion object {
         const val RECONNECT_DELAY_MS = 10_000L
+        const val FIRST_RETRY_DELAY_MS = 2_000L
+        const val MAX_RETRY_DELAY_MS = 60_000L
 
         /**
          * The start of upstream's parse error message (SocketError.FAILED_TO_PARSE in shared). It
@@ -193,5 +188,42 @@ class TripTracker(
          * at most once per [RECONNECT_DELAY_MS].
          */
         const val PARSE_ERROR_PREFIX = "channel failed to parse"
+
+        /**
+         * Runs [block] until it succeeds, backing off from [FIRST_RETRY_DELAY_MS] to
+         * [MAX_RETRY_DELAY_MS]. A 4xx other than 408 (timeout) or 429 (rate limit) won't succeed
+         * later, so it throws [TripUnavailableException] instead.
+         */
+        suspend fun <T : Any> retrying(name: String, block: suspend () -> ApiResult<T>): T {
+            var delayMs = FIRST_RETRY_DELAY_MS
+            while (true) {
+                val result =
+                    try {
+                        block()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        ApiResult.Error(message = e.toString())
+                    }
+                when (result) {
+                    is ApiResult.Ok -> return result.data
+                    is ApiResult.Error -> {
+                        val code = result.code
+                        if (code != null && isPermanent(code)) {
+                            Log.w(LIVE_UPDATE_TAG, "Loading $name failed for good: $result")
+                            throw TripUnavailableException(name, code)
+                        }
+                        Log.w(
+                            LIVE_UPDATE_TAG,
+                            "Loading $name failed, retrying in $delayMs ms: $result",
+                        )
+                        delay(delayMs)
+                        delayMs = (delayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                    }
+                }
+            }
+        }
+
+        private fun isPermanent(code: Int): Boolean = code in 400..499 && code != 408 && code != 429
     }
 }

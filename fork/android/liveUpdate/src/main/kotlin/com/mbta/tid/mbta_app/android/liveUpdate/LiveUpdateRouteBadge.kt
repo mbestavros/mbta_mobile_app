@@ -10,7 +10,6 @@ import android.graphics.Typeface
 import androidx.annotation.DrawableRes
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
-import androidx.core.graphics.toColorInt
 import com.mbta.tid.mbta_app.android.R
 import com.mbta.tid.mbta_app.model.RoutePillSpec
 import com.mbta.tid.mbta_app.model.RouteType
@@ -163,10 +162,5 @@ object LiveUpdateRouteBadge {
     private fun px(context: Context, dp: Float): Int =
         (dp * context.resources.displayMetrics.density).roundToInt()
 
-    private fun parseColor(hex: String, fallback: Int): Int =
-        try {
-            "#$hex".toColorInt()
-        } catch (e: IllegalArgumentException) {
-            fallback
-        }
+    private fun parseColor(hex: String, fallback: Int): Int = parseRouteColor(hex) ?: fallback
 }
