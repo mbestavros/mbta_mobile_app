@@ -95,10 +95,14 @@ internal object LiveUpdateMapPin {
             }
             val map = mapView?.mapboxMap
             val layerExists = map?.styleLayerExists(LAYER_ID) == true
-            val sourceExists = map?.styleSourceExists(StopFeaturesBuilder.stopSourceId) == true
+            // Once the pin is shown, this is the only query: the source and anchor matter only to
+            // add it.
+            val sourceExists =
+                !layerExists && map?.styleSourceExists(StopFeaturesBuilder.stopSourceId) == true
             // Before upstream adds its anchor slots, wait: a layer added on top would end up below
             // upstream's stop layers.
-            val anchorExists = map?.styleLayerExists(MapLayerManager.puckAnchorLayerId) == true
+            val anchorExists =
+                !layerExists && map?.styleLayerExists(MapLayerManager.puckAnchorLayerId) == true
             if (map != null && !layerExists && sourceExists && anchorExists) {
                 try {
                     map.addLayerBelow(layer, below = MapLayerManager.puckAnchorLayerId)
