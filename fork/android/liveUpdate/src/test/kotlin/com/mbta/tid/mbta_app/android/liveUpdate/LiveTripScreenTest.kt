@@ -1,6 +1,12 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
 import android.app.Application
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasClickAction
@@ -10,6 +16,7 @@ import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.mbta.tid.mbta_app.analytics.Analytics
 import com.mbta.tid.mbta_app.analytics.MockAnalytics
@@ -18,6 +25,7 @@ import com.mbta.tid.mbta_app.android.util.SettingsCache
 import com.mbta.tid.mbta_app.model.Direction
 import com.mbta.tid.mbta_app.model.StopDetailsFilter
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
+import com.mbta.tid.mbta_app.model.response.AlertsStreamDataResponse
 import com.mbta.tid.mbta_app.network.MockPhoenixSocket
 import com.mbta.tid.mbta_app.repositories.IErrorBannerStateRepository
 import com.mbta.tid.mbta_app.repositories.IGlobalRepository
@@ -106,7 +114,10 @@ class LiveTripScreenTest {
         var backs = 0
     }
 
-    private fun render(direction: Direction? = Direction("North", "Alewife", 0)): Calls {
+    private fun render(
+        direction: Direction? = Direction("North", "Alewife", 0),
+        map: (@Composable (PaddingValues, AlertsStreamDataResponse?) -> Unit)? = null,
+    ): Calls {
         val calls = Calls()
         val tripDetailsVM =
             MockTripDetailsViewModel().apply {
@@ -134,11 +145,26 @@ class LiveTripScreenTest {
                     errorBannerViewModel = errorBanner,
                     socket = MockPhoenixSocket(onAttachCallback = { calls.attaches++ }),
                     allAlerts = null,
+                    map = map,
                 )
             }
         }
         compose.waitForIdle()
         return calls
+    }
+
+    @Test
+    fun `with a map, the page is a sheet over it`() {
+        var mapShown = false
+        val calls =
+            render(map = { _, _ -> Box(Modifier.fillMaxSize().testTag("map")) { mapShown = true } })
+
+        assertTrue(mapShown)
+        compose.onNodeWithTag("map").assertExists()
+        compose.onNodeWithContentDescription("Back").assertIsEnabled().performClick()
+        compose.waitForIdle()
+        assertEquals(1, calls.backs)
+        assertEquals(listOf(TripDetailsViewModel.Context.TripDetails), calls.contexts.distinct())
     }
 
     @Test

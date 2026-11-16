@@ -34,6 +34,9 @@ import java.util.concurrent.ConcurrentHashMap
  *   the error banner showing errors only for the sheet route set with `setSheetRoute`.
  *   `LiveTripScreenTest` and `TripDetailsViewContractTest` check the first. The others are not
  *   checked: a page that never loads, or never shows errors, is the sign.
+ * - Its map (`LiveTripMap.kt`) copies upstream's glue between `HomeMapView` and its view models
+ *   from `ContentView` and `MapAndSheetPage`. `LiveTripMapTest` checks the calls the fork makes,
+ *   but not that upstream makes no new ones.
  * - The stop layers have a layer whose ID ends in [SELECTED_PIN_LAYER_SUFFIX] (`LiveUpdateMapPin`).
  *   `LiveUpdateMapPinTest` checks it on the real `StopLayerGenerator`, and the pin reports at
  *   runtime when it can't show.

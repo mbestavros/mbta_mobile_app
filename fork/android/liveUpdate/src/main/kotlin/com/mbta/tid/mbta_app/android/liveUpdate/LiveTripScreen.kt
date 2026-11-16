@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -33,8 +34,13 @@ import com.mbta.tid.mbta_app.android.ModalRoutes
 import com.mbta.tid.mbta_app.android.R
 import com.mbta.tid.mbta_app.android.alertDetails.AlertDetailsPage
 import com.mbta.tid.mbta_app.android.component.ChannelDebugView
+import com.mbta.tid.mbta_app.android.component.DragHandle
 import com.mbta.tid.mbta_app.android.component.ErrorBanner
 import com.mbta.tid.mbta_app.android.component.ScrollSeparatorColumn
+import com.mbta.tid.mbta_app.android.component.sheet.BottomSheetScaffold
+import com.mbta.tid.mbta_app.android.component.sheet.SheetValue
+import com.mbta.tid.mbta_app.android.component.sheet.rememberBottomSheetScaffoldState
+import com.mbta.tid.mbta_app.android.component.sheet.rememberStandardBottomSheetState
 import com.mbta.tid.mbta_app.android.pages.ExplainerPage
 import com.mbta.tid.mbta_app.android.state.getGlobalData
 import com.mbta.tid.mbta_app.android.state.subscribeToAlerts
@@ -42,6 +48,7 @@ import com.mbta.tid.mbta_app.android.stopDetails.TripDetailsView
 import com.mbta.tid.mbta_app.android.stopDetails.TripRouteAccents
 import com.mbta.tid.mbta_app.android.tripDetails.TripDetailsPageHeader
 import com.mbta.tid.mbta_app.android.util.IsLoadingSheetContents
+import com.mbta.tid.mbta_app.android.util.SettingsCache
 import com.mbta.tid.mbta_app.android.util.fromHex
 import com.mbta.tid.mbta_app.android.util.timer
 import com.mbta.tid.mbta_app.model.Alert
@@ -53,6 +60,7 @@ import com.mbta.tid.mbta_app.model.response.AlertsStreamDataResponse
 import com.mbta.tid.mbta_app.network.PhoenixSocket
 import com.mbta.tid.mbta_app.repositories.ErrorKey
 import com.mbta.tid.mbta_app.repositories.IGlobalRepository
+import com.mbta.tid.mbta_app.repositories.Settings
 import com.mbta.tid.mbta_app.routes.SheetRoutes
 import com.mbta.tid.mbta_app.utils.NavigationCallbacks
 import com.mbta.tid.mbta_app.viewModel.IErrorBannerViewModel
@@ -62,7 +70,7 @@ import com.mbta.tid.mbta_app.viewModel.TripDetailsPageViewModel
 import com.mbta.tid.mbta_app.viewModel.TripDetailsViewModel
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.launch
-import org.koin.compose.getKoin
+import org.koin.compose.currentKoinScope
 import org.koin.compose.koinInject
 import org.koin.core.qualifier.named
 
@@ -97,12 +105,20 @@ internal fun LiveTripRoute(
         }
 
     val (tripDetailsVM, tripDetailsPageVM) = rememberLiveTripViewModels()
+    // Upstream's "Hide maps" setting shows the list alone, as on upstream's pages.
+    val mapVM = if (SettingsCache.get(Settings.HideMaps)) null else rememberLiveTripMapViewModel()
     LiveTripScreen(
         filter,
         onBack = onBack,
         onOpenStop = onOpenStop,
         tripDetailsVM = tripDetailsVM,
         tripDetailsPageVM = tripDetailsPageVM,
+        map =
+            mapVM?.let { vm ->
+                { sheetPadding, alerts ->
+                    LiveTripMap(filter, sheetPadding, alerts, tripDetailsVM, vm, onOpenStop)
+                }
+            },
         pill = { LiveTripPill(request.tripId, controller) },
     )
 }
@@ -115,7 +131,8 @@ internal fun LiveTripRoute(
  */
 @Composable
 internal fun rememberLiveTripViewModels(): Pair<ITripDetailsViewModel, ITripDetailsPageViewModel> {
-    val koin = getKoin()
+    // The scope koinInject uses.
+    val koin = currentKoinScope()
     val tripDetailsVM =
         viewModel(key = "liveTrip.tripDetails") {
             TripDetailsViewModel(
@@ -136,6 +153,8 @@ internal fun rememberLiveTripViewModels(): Pair<ITripDetailsViewModel, ITripDeta
  * Upstream's trip page (`TripDetailsPage`), rebuilt around upstream's `TripDetailsView` with this
  * page's own view models. `TripDetailsPage` takes a trip details view model, but its
  * `TripDetailsView` uses the Koin singleton, so it can't be reused as a whole.
+ *
+ * With a [map], the page is a sheet over it, in upstream's sheet. Without one, it fills the screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,6 +167,7 @@ internal fun LiveTripScreen(
     errorBannerViewModel: IErrorBannerViewModel = koinInject(),
     socket: PhoenixSocket = koinInject(),
     allAlerts: AlertsStreamDataResponse? = subscribeToAlerts(),
+    map: (@Composable (sheetPadding: PaddingValues, AlertsStreamDataResponse?) -> Unit)? = null,
     pill: @Composable () -> Unit = {},
 ) {
     val now by timer(updateInterval = 5.seconds)
@@ -201,12 +221,12 @@ internal fun LiveTripScreen(
             )
     }
 
-    Box(Modifier.fillMaxSize()) {
+    val pageColor = route?.color?.let { Color.fromHex(it) } ?: colorResource(R.color.fill2)
+
+    @Composable
+    fun Page(topInset: Modifier) {
         Column(
-            Modifier.fillMaxSize()
-                .background(route?.color?.let { Color.fromHex(it) } ?: colorResource(R.color.fill2))
-                .statusBarsPadding()
-                .padding(top = 12.dp),
+            Modifier.fillMaxSize().background(pageColor).then(topInset).padding(top = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (route != null && direction != null) {
@@ -243,6 +263,32 @@ internal fun LiveTripScreen(
                             .padding(bottom = PILL_CLEARANCE),
                     tripDetailsVM = tripDetailsVM,
                 )
+            }
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        if (map == null) {
+            Page(Modifier.statusBarsPadding())
+        } else {
+            val scaffoldState =
+                rememberBottomSheetScaffoldState(
+                    rememberStandardBottomSheetState(SheetValue.Medium),
+                )
+            val sheetValue = scaffoldState.bottomSheetState.currentValue
+            BottomSheetScaffold(
+                sheetContent = {
+                    // As upstream's sheet: only the full sheet reaches the status bar.
+                    Page(
+                        if (sheetValue == SheetValue.Large) Modifier.statusBarsPadding()
+                        else Modifier,
+                    )
+                },
+                sheetDragHandle = { DragHandle() },
+                sheetContainerColor = pageColor,
+                scaffoldState = scaffoldState,
+            ) { sheetPadding ->
+                map(sheetPadding, allAlerts)
             }
         }
         Box(Modifier.align(Alignment.BottomCenter)) { pill() }
