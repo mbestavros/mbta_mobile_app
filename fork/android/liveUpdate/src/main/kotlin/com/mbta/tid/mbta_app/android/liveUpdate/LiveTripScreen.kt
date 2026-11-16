@@ -17,11 +17,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -48,6 +50,7 @@ import com.mbta.tid.mbta_app.android.stopDetails.TripDetailsView
 import com.mbta.tid.mbta_app.android.stopDetails.TripRouteAccents
 import com.mbta.tid.mbta_app.android.tripDetails.TripDetailsPageHeader
 import com.mbta.tid.mbta_app.android.util.IsLoadingSheetContents
+import com.mbta.tid.mbta_app.android.util.ManageErrorBannerBackgrounding
 import com.mbta.tid.mbta_app.android.util.SettingsCache
 import com.mbta.tid.mbta_app.android.util.fromHex
 import com.mbta.tid.mbta_app.android.util.timer
@@ -59,6 +62,8 @@ import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import com.mbta.tid.mbta_app.model.response.AlertsStreamDataResponse
 import com.mbta.tid.mbta_app.network.PhoenixSocket
 import com.mbta.tid.mbta_app.repositories.ErrorKey
+import com.mbta.tid.mbta_app.repositories.IDebugRepository
+import com.mbta.tid.mbta_app.repositories.IErrorBannerStateRepository
 import com.mbta.tid.mbta_app.repositories.IGlobalRepository
 import com.mbta.tid.mbta_app.repositories.Settings
 import com.mbta.tid.mbta_app.routes.SheetRoutes
@@ -73,6 +78,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.currentKoinScope
 import org.koin.compose.koinInject
 import org.koin.core.qualifier.named
+import org.koin.core.scope.Scope
 
 /**
  * The trip page of [LiveTripActivity] for the trip it was opened for. While that trip is tracked,
@@ -87,15 +93,36 @@ internal fun LiveTripRoute(
     onOpenStop: (String) -> Unit,
     controller: LiveUpdateController = koinInject(),
     globalRepository: IGlobalRepository = koinInject(),
+    socket: PhoenixSocket = koinInject(),
+    errorBannerRepository: IErrorBannerStateRepository = koinInject(),
+    debugRepository: IDebugRepository = koinInject(),
+    viewModels: Pair<ITripDetailsViewModel, ITripDetailsPageViewModel> =
+        rememberLiveTripViewModels(),
 ) {
-    val session by controller.session.collectAsState()
+    LaunchedEffect(Unit) {
+        LiveTripSocketSetup.ensure(socket, errorBannerRepository, debugRepository)
+    }
+    // The service publishes a session on every prediction. Read only what the page uses, so the
+    // page recomposes when the trip's request or vehicle changes, not on every prediction.
+    val session = controller.session.collectAsState()
+    val tracked by
+        remember(request.tripId) {
+            derivedStateOf(structuralEqualityPolicy()) {
+                session.value
+                    ?.takeIf { it.request.tripId == request.tripId }
+                    ?.let {
+                        Tracked(it.request, LiveUpdateDeepLink.vehicleId(it.request, it.snapshot))
+                    }
+            }
+        }
     val global by globalRepository.state.collectAsState()
-    val tracked = session?.takeIf { it.request.tripId == request.tripId }
     val currentRequest = tracked?.request ?: request
 
     // Keep the last vehicle known: a vehicle missing from one update must not reload the page.
-    var currentVehicleId by remember(request.tripId) { mutableStateOf(vehicleId) }
-    val latestVehicleId = tracked?.let { LiveUpdateDeepLink.vehicleId(it.request, it.snapshot) }
+    // Start from the latest one, so the page doesn't load the intent's vehicle first.
+    val latestVehicleId = tracked?.vehicleId
+    var currentVehicleId by
+        remember(request.tripId) { mutableStateOf(latestVehicleId ?: vehicleId) }
     LaunchedEffect(latestVehicleId) { latestVehicleId?.let { currentVehicleId = it } }
 
     // The target is a station, which needs the global data. Wait for it, so the page loads once.
@@ -104,9 +131,14 @@ internal fun LiveTripRoute(
             global?.let { LiveUpdateDeepLink.tripPageFilter(currentRequest, currentVehicleId, it) }
         }
 
-    val (tripDetailsVM, tripDetailsPageVM) = rememberLiveTripViewModels()
-    // Upstream's "Hide maps" setting shows the list alone, as on upstream's pages.
-    val mapVM = if (SettingsCache.get(Settings.HideMaps)) null else rememberLiveTripMapViewModel()
+    val (tripDetailsVM, tripDetailsPageVM) = viewModels
+    // Upstream's "Hide maps" setting shows the list alone, as on upstream's pages. In a new
+    // process the settings load after the first frame. Wait for them, so a hidden map never
+    // starts.
+    val settingsLoaded = SettingsCache.getNullable() != null
+    val hideMaps = SettingsCache.get(Settings.HideMaps)
+    if (!settingsLoaded) return
+    val mapVM = if (hideMaps) null else rememberLiveTripMapViewModel()
     LiveTripScreen(
         filter,
         onBack = onBack,
@@ -134,20 +166,21 @@ internal fun rememberLiveTripViewModels(): Pair<ITripDetailsViewModel, ITripDeta
     // The scope koinInject uses.
     val koin = currentKoinScope()
     val tripDetailsVM =
-        viewModel(key = "liveTrip.tripDetails") {
-            TripDetailsViewModel(
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(named("coroutineDispatcherIO")),
-            )
-        }
+        viewModel(key = "liveTrip.tripDetails") { koin.newLiveTripDetailsViewModel() }
     val tripDetailsPageVM =
         viewModel(key = "liveTrip.tripDetailsPage") { TripDetailsPageViewModel(tripDetailsVM) }
     return tripDetailsVM to tripDetailsPageVM
 }
+
+/**
+ * A trip details view model with the dependencies upstream's Koin module gives its singleton. The
+ * qualifier is checked against upstream's real module by `LiveTripKoinContractTest`.
+ */
+internal fun Scope.newLiveTripDetailsViewModel(): TripDetailsViewModel =
+    TripDetailsViewModel(get(), get(), get(), get(), get(), get(named("coroutineDispatcherIO")))
+
+/** What the trip page reads from the tracked session. */
+private data class Tracked(val request: LiveUpdateRequest, val vehicleId: String?)
 
 /**
  * Upstream's trip page (`TripDetailsPage`), rebuilt around upstream's `TripDetailsView` with this
@@ -172,8 +205,13 @@ internal fun LiveTripScreen(
 ) {
     val now by timer(updateInterval = 5.seconds)
     val global = getGlobalData(ErrorKey(setOf(SheetRoutes.TripDetails::class), "LiveTripScreen"))
+    // As upstream's TripDetailsPage.
+    tripDetailsPageVM.koinScope = currentKoinScope()
     val pageState by tripDetailsPageVM.models.collectAsState()
     val tripState by tripDetailsVM.models.collectAsState()
+
+    // As ContentView: the banner stops its checks while no page is in front.
+    ManageErrorBannerBackgrounding(errorBannerViewModel)
 
     // MainActivity's ContentView opens the app's socket only while MainActivity is resumed. Open it
     // while this page is resumed in the same way. MainActivity pauses before this page resumes,

@@ -25,9 +25,9 @@ import java.util.concurrent.ConcurrentHashMap
  *   (`LiveUpdateDeepLink.intent`). `UpstreamContractTest` checks it.
  * - `MainActivity.onCreate` calls `setContent` before the overlay is installed
  *   (`LiveUpdateOverlayInstaller`). [contentProblem] checks it at runtime.
- * - Only the map and sheet page handles deep links (`returnToTrip` in `LiveUpdateOverlay.kt`).
- *   [DEEP_LINK_HANDLED_TIMEOUT_MS] after a link, a runtime check reports a link that is still
- *   pending.
+ * - Only the map and sheet page handles deep links (`CheckSentLinks` in `LiveUpdateOverlay.kt`, for
+ *   links recorded in `SentLinks`). [DEEP_LINK_HANDLED_TIMEOUT_MS] after a link, a runtime check
+ *   reports a link that is still pending.
  * - The fork's trip page (`LiveTripScreen.kt`) rebuilds upstream's `TripDetailsPage` around
  *   upstream's `TripDetailsView`. It relies on `TripDetailsView` using the view model it is given,
  *   on the app's socket opening only while an activity attaches it (as `ContentView` does), and on
@@ -35,8 +35,14 @@ import java.util.concurrent.ConcurrentHashMap
  *   `LiveTripScreenTest` and `TripDetailsViewContractTest` check the first. The others are not
  *   checked: a page that never loads, or never shows errors, is the sign.
  * - Its map (`LiveTripMap.kt`) copies upstream's glue between `HomeMapView` and its view models
- *   from `ContentView` and `MapAndSheetPage`. `LiveTripMapTest` checks the calls the fork makes,
- *   but not that upstream makes no new ones.
+ *   from `ContentView` and `MapAndSheetPage`, and `HomeMapView` must call `navChanged` after the
+ *   viewport is set. `LiveTripMapTest` checks the calls the fork makes and their order.
+ * - `LiveTripActivity` and `LiveTripSocketSetup` repeat, for a cold start, what
+ *   `MainActivity.onCreate` and `ContentView` set up. `MirroredUpstreamTest` fingerprints every
+ *   upstream block the fork copies, and fails when upstream changes one.
+ * - The page's view models take positional Koin `get()` calls and the `coroutineDispatcherDefault`
+ *   and `coroutineDispatcherIO` qualifiers. `LiveTripKoinContractTest` resolves them from
+ *   upstream's real modules.
  * - The stop layers have a layer whose ID ends in [SELECTED_PIN_LAYER_SUFFIX] (`LiveUpdateMapPin`).
  *   `LiveUpdateMapPinTest` checks it on the real `StopLayerGenerator`, and the pin reports at
  *   runtime when it can't show.

@@ -43,7 +43,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.structuralEqualityPolicy
@@ -76,9 +75,7 @@ import com.mbta.tid.mbta_app.repositories.IGlobalRepository
 import com.mbta.tid.mbta_app.viewModel.IMapViewModel
 import com.mbta.tid.mbta_app.viewModel.IStopDetailsViewModel
 import com.mbta.tid.mbta_app.viewModel.ITripDetailsViewModel
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /**
@@ -110,7 +107,6 @@ fun LiveUpdateOverlay(
         }
     }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     if (pendingPermission != null) PermissionRequest(controller)
 
@@ -133,6 +129,7 @@ fun LiveUpdateOverlay(
     val riding = current?.state?.phase is LiveUpdatePhase.Riding
     val showsPicker = onTrackedTripPage || (onStationPage && !riding)
     val onEntryScreen = page.onEntryScreen
+    CheckSentLinks(onEntryScreen)
 
     // Upstream pins the trip page's target stop. A trip page opened from the notification targets
     // the destination already, so only pin it when the target is another stop.
@@ -188,7 +185,7 @@ fun LiveUpdateOverlay(
             }
             else -> {
                 val activity = context.findMainActivity() ?: return@AnimatedLiveUpdatePill
-                returnToTrip(activity, current, scope, mayBeOnMorePage = onEntryScreen)
+                returnToTrip(activity, current)
             }
         }
     }
@@ -258,7 +255,24 @@ private fun TrackedDestinationSheet(
  * Opens the tracked trip (see [LiveUpdateDeepLink]). Aboard, that is [LiveTripActivity].
  *
  * Before boarding, it is stop details, opened with the stop deep link. The map and sheet page
- * handles the link and clears it on its next frame.
+ * handles the link and clears it on its next frame. [CheckSentLinks] checks that it did.
+ */
+private fun returnToTrip(activity: MainActivity, session: LiveUpdateSession) {
+    val global = session.snapshot?.global
+    val phase = session.state?.phase
+    val vehicleId = LiveUpdateDeepLink.vehicleId(session.request, session.snapshot)
+    val opened = LiveUpdateDeepLink.target(session.request, phase, vehicleId, global)
+    if (opened is LiveUpdateDeepLink.Target.TripPage) {
+        activity.startActivity(opened.intent(activity))
+        return
+    }
+    val link = LiveUpdateDeepLink.boardingLink(session.request, global)
+    activity.deepLinkStateFlow.value = link.state
+    SentLinks.sent(link)
+}
+
+/**
+ * Checks that upstream opened the links the fork sent to this MainActivity (see [SentLinks]).
  *
  * The More page does not handle deep links. The overlay can't see upstream's navigation, so it
  * can't tell the More page from the map entry screen. If the link is still pending after a timeout,
@@ -270,25 +284,17 @@ private fun TrackedDestinationSheet(
  * still pending after the timeout means upstream no longer handles it there. That is reported (see
  * [UpstreamContract]) and nothing restarts.
  */
-private fun returnToTrip(
-    activity: MainActivity,
-    session: LiveUpdateSession,
-    scope: CoroutineScope,
-    mayBeOnMorePage: Boolean,
-) {
-    val global = session.snapshot?.global
-    val phase = session.state?.phase
-    val vehicleId = LiveUpdateDeepLink.vehicleId(session.request, session.snapshot)
-    val opened = LiveUpdateDeepLink.target(session.request, phase, vehicleId, global)
-    if (opened is LiveUpdateDeepLink.Target.TripPage) {
-        activity.startActivity(opened.intent(activity))
-        return
-    }
-    val target = LiveUpdateDeepLink.state(session.request, global)
-    activity.deepLinkStateFlow.value = target
-    scope.launch {
+@Composable
+private fun CheckSentLinks(onEntryScreen: Boolean) {
+    val link by SentLinks.pending.collectAsState()
+    val mayBeOnMorePage by rememberUpdatedState(onEntryScreen)
+    val context = LocalContext.current
+    LaunchedEffect(link) {
+        val sent = link ?: return@LaunchedEffect
+        val activity = context.findMainActivity() ?: return@LaunchedEffect
         delay(UpstreamContract.DEEP_LINK_HANDLED_TIMEOUT_MS)
-        val stillPending = activity.deepLinkStateFlow.value == target
+        SentLinks.checked(sent)
+        val stillPending = activity.deepLinkStateFlow.value == sent.state
         when (pendingLinkOutcome(stillPending, activity.isFinishing, mayBeOnMorePage)) {
             PendingLinkOutcome.None -> Unit
             PendingLinkOutcome.ReportBreak ->
@@ -301,8 +307,7 @@ private fun returnToTrip(
                 LiveUpdateDiagnostics(activity).record("deep_link_restart reason=still_pending")
                 activity.clearDeepLink()
                 activity.startActivity(
-                    opened
-                        .intent(activity)
+                    LiveUpdateDeepLink.intent(activity, sent.path)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                 )
             }

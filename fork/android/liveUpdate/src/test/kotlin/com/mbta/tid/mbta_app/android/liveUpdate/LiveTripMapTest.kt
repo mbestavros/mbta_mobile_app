@@ -116,6 +116,7 @@ class LiveTripMapTest {
         var viewportManagers = 0
         var alertUpdates = 0
         val permissions = mutableListOf<Boolean>()
+        val order = mutableListOf<String>()
     }
 
     @Test
@@ -123,12 +124,18 @@ class LiveTripMapTest {
         val calls = Calls()
         val mapVM =
             MockMapViewModel().apply {
-                onNavChanged = { calls.navEntries += it }
+                onNavChanged = {
+                    calls.navEntries += it
+                    calls.order += "navChanged"
+                }
                 onSelectedVehicleUpdated = { vehicle, follow ->
                     calls.vehicles += vehicle to follow
                 }
                 onTripStopsUpdated = { calls.tripStops += it }
-                onSetViewportManager = { calls.viewportManagers++ }
+                onSetViewportManager = {
+                    calls.viewportManagers++
+                    calls.order += "setViewportManager"
+                }
                 onAlertsChanged = { calls.alertUpdates++ }
                 onLocationPermissionsChanged = { calls.permissions += it }
             }
@@ -158,6 +165,8 @@ class LiveTripMapTest {
         assertEquals(1, calls.viewportManagers)
         assertEquals(1, calls.alertUpdates)
         assertEquals(listOf<SheetRoutes?>(SheetRoutes.TripDetails(filter)), calls.navEntries)
+        // HomeMapView's first navChanged moves the viewport, so it must be set before.
+        assertEquals(listOf("setViewportManager", "navChanged"), calls.order)
 
         val vehicle = f.vehicle(Vehicle.CurrentStatus.InTransitTo, 40)
         updates.tryEmit(TripDetailsViewModel.MapUpdate.SelectedVehicle(vehicle))

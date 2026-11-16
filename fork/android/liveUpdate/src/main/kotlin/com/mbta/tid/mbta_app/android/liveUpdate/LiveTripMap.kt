@@ -23,6 +23,7 @@ import com.mbta.tid.mbta_app.viewModel.MapViewModel
 import com.mbta.tid.mbta_app.viewModel.TripDetailsViewModel
 import org.koin.compose.currentKoinScope
 import org.koin.core.qualifier.named
+import org.koin.core.scope.Scope
 
 /**
  * This page's own map view model. Upstream's is a Koin singleton that MainActivity's map uses. If
@@ -33,21 +34,26 @@ import org.koin.core.qualifier.named
 internal fun rememberLiveTripMapViewModel(): IMapViewModel {
     // The scope koinInject uses.
     val koin = currentKoinScope()
-    return viewModel(key = "liveTrip.map") {
-        MapViewModel(
-            koin.get(),
-            koin.get(),
-            koin.get(),
-            koin.get(),
-            koin.get(),
-            koin.get(),
-            koin.get(),
-            koin.get(),
-            koin.get(named("coroutineDispatcherDefault")),
-            koin.get(named("coroutineDispatcherIO")),
-        )
-    }
+    return viewModel(key = "liveTrip.map") { koin.newLiveTripMapViewModel() }
 }
+
+/**
+ * A map view model with the dependencies upstream's Koin module gives its singleton. The qualifiers
+ * are checked against upstream's real module by `LiveTripKoinContractTest`.
+ */
+internal fun Scope.newLiveTripMapViewModel(): MapViewModel =
+    MapViewModel(
+        get(),
+        get(),
+        get(),
+        get(),
+        get(),
+        get(),
+        get(),
+        get(),
+        get(named("coroutineDispatcherDefault")),
+        get(named("coroutineDispatcherIO")),
+    )
 
 /**
  * Upstream's map for the trip page, with this page's view models. Upstream's `ContentView` and
@@ -60,6 +66,15 @@ internal fun rememberLiveTripMapViewModel(): IMapViewModel {
  * It shows only the trip's vehicle, so it opens no vehicles channel of its own. It never starts
  * location updates: upstream's trip page hides the rider's location. A tap on a stop pin opens that
  * stop's details, as a tap in the list does.
+ *
+ * Two differences from `MapAndSheetPage`, both because this page only ever shows a trip:
+ * - It forwards the selected vehicle whatever the filter. Upstream forwards it only while a trip
+ *   filter is set.
+ * - It follows the vehicle when the viewport is in vehicle overview. Upstream also checks that the
+ *   trip page is the current page.
+ *
+ * As upstream, it reads the map updates as state, so of two updates in one frame only the second
+ * reaches the map.
  */
 @Composable
 internal fun LiveTripMap(

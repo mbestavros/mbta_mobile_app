@@ -59,8 +59,9 @@ goes into every variant. An unknown source set name fails the build.
 `.github/workflows/fork-upstream-canary.yaml` runs on Mondays and Thursdays, and by hand from the
 Actions tab. In a scratch checkout, it rebases the fork onto `mbta/mobile_app` main, then runs the
 fork format check, the fork tests and the prod release build with the APK check. It pushes
-nothing. On a failure it opens an issue labelled `upstream-canary`, or comments on the open one.
-The next run that passes closes it. The issue says which stage failed: the rebase, the fork
+nothing. On a failure it opens an issue labelled `upstream-canary`, or comments on the open one,
+unless the latest note already reports the same stage on the same upstream commit. The next run
+that passes closes it. The issue says which stage failed: the rebase, the fork
 checks or the release build. So a break in upstream shows up a few days after upstream merges it,
 not at the next rebase.
 

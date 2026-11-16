@@ -25,7 +25,8 @@ notification with a progress bar.
     destination, so upstream's list marks it and the map pins it and fits the vehicle and the
     destination. The map shows only the tracked vehicle, and not your location. With upstream's
     "Hide maps" setting, the list fills the screen. While the trip is tracked, the page follows a new
-    destination or vehicle, and the pill on it opens the destination list. Back opens stop details
+    destination or vehicle, and the pill on it opens the destination list. Back returns to where
+    you were in the app. Opened from the notification with the app closed, Back opens stop details
     at the boarding station. A tap on a stop opens that stop's details.
 - If you open the tracked trip's page yourself (it targets the boarding station), the map also
   pins the destination station. The pin stays while you move the map.
@@ -128,9 +129,11 @@ what guards it. Start there when a contract breaks, and add a new contract there
 | `LiveUpdateMapPin` copies upstream's selected-pin layer, found by the `-selected-pin` ending of its ID. | `LiveUpdateMapPinTest` runs the real `StopLayerGenerator`. At runtime, check `map_pin_layer`. |
 | `LiveUpdateMapPin` finds the Mapbox `MapView` in the view tree (Compose's `MapboxMap` hosts it through `AndroidView`), and adds its layer on upstream's stop source, below the puck anchor slot. It checks every second while shown and adds the layer back if the style dropped it. If this breaks, the pin is missing. The rest of the feature still works. | Runtime check `map_pin_not_shown`: 15 checks in a row (about 15 seconds) find no `MapView`, no stop source, no puck anchor layer, or fail to add the layer. |
 | `LiveUpdateOverlayInstaller` adds the overlay in a task posted from `onActivityCreated`, and relies on `MainActivity.onCreate` calling `setContent` first. `setContent` reuses a `ComposeView` that is already the first child of the content view, so in the other order the overlay would replace upstream's UI. | Runtime check `overlay_install_order`: the first child of the content view is not upstream's `ComposeView`. If the content view is empty, the installer skips the pill. |
-| Only the map and sheet page handles deep links, on its next frame. The More page ignores them. "Return to trip tracking" sets the link. | 1.5 seconds later, a link still pending is handled by `pendingLinkOutcome`. From a screen where the map shows its overview, the More page may be open, so the overlay restarts `MainActivity` with the link as a new task. This drops the saved navigation state and opens the map and sheet page. From any other screen, it is runtime check `deep_link_unhandled`. |
-| `LiveTripScreen` rebuilds upstream's `TripDetailsPage` (its `LaunchedEffect`s and layout) around `TripDetailsView`. `TripDetailsView` must use the view model it is given. The app's socket must open only while an activity attaches it, and the error banner shows only errors for the sheet route set with `setSheetRoute`. | `LiveTripScreenTest` renders it with the real `TripDetailsView` and checks the context, the filters, the socket attach and the sheet route. If upstream's `TripDetailsPage` gains a new effect, the fork's page lacks it: compare the two after a rebase. |
-| `LiveTripMap` connects `HomeMapView` to its view model as `ContentView` and `MapAndSheetPage` do: `setViewportManager` before the first `navChanged`, and the trip details `mapUpdates` forwarded to `selectedVehicleUpdated` and `tripStopsUpdated`. If upstream adds a call to that glue, the fork's map lacks it and still compiles. | `LiveTripMapTest` runs the real `HomeMapView` (without Mapbox) and checks the calls. Compare the glue in `ContentView` and `MapAndSheetPage` after a rebase. |
+| Only the map and sheet page handles deep links, on its next frame. The More page ignores them. "Return to trip tracking" sets the link, and the fork's trip page sends links for Back from a cold start and for a tapped stop. Both record the link in `SentLinks`. | 1.5 seconds after `MainActivity` shows, the overlay checks a link still pending with `pendingLinkOutcome`. From a screen where the map shows its overview, the More page may be open, so the overlay restarts `MainActivity` with the link as a new task. This drops the saved navigation state and opens the map and sheet page. From any other screen, it is runtime check `deep_link_unhandled`. |
+| `LiveTripScreen` rebuilds upstream's `TripDetailsPage` (its `LaunchedEffect`s and layout) around `TripDetailsView`. `TripDetailsView` must use the view model it is given. The app's socket must open only while an activity attaches it, and the error banner shows only errors for the sheet route set with `setSheetRoute`. | `LiveTripScreenTest` renders it with the real `TripDetailsView` and checks the context, the filters, the socket attach and the sheet route. `MirroredUpstreamTest` fingerprints upstream's `TripDetailsPage` and fails when it changes. |
+| `LiveTripMap` connects `HomeMapView` to its view model as `ContentView` and `MapAndSheetPage` do: `setViewportManager` before the first `navChanged`, and the trip details `mapUpdates` forwarded to `selectedVehicleUpdated` and `tripStopsUpdated`. If upstream adds a call to that glue, the fork's map lacks it and still compiles. | `LiveTripMapTest` runs the real `HomeMapView` (without Mapbox) and checks the calls and their order. `MirroredUpstreamTest` fingerprints the glue in `ContentView` and `MapAndSheetPage` and fails when it changes. |
+| Opened from the notification in a new process, `LiveTripActivity` runs without `MainActivity`. It repeats what `MainActivity.onCreate` and `ContentView` set up that the page needs: the controller (`LiveUpdateBootstrap.start`), the socket's error, attach and detach handlers and logging (`LiveTripSocketSetup`, once per process), error banner backgrounding, the display cutout mode and the Mapbox config. It doesn't start Sentry, which `MainActivity` starts. | `LiveTripExitTest` checks the socket handlers. `MirroredUpstreamTest` fingerprints `MainActivity.onCreate` and the `ContentView` blocks. Run phone step 8's cold start. |
+| The page builds its view models with positional `get()` calls and the `coroutineDispatcherDefault` and `coroutineDispatcherIO` qualifiers. The compiler checks neither against upstream's Koin module. | `LiveTripKoinContractTest` builds them from upstream's real modules, started as `MainApplication` starts them. |
 | What `MapViewModel.LayerState` (`StopSelected`, `TripSelected`, `Overview`) means on each page, read by `TripPage`, `StationPage` and the overlay. | Not checked against a real `MapViewModel`. The tests build the states by hand. Run phone steps 4, 5 and 8 after a rebase. |
 | `TAB_BAR_HEIGHT` (72 dp) guesses the height of upstream's bottom tab row. The pill sits above it on the map overview. | Not checked. Look at the pill above the tabs after a rebase. |
 
@@ -150,9 +153,14 @@ The Compose UI tests (`LiveUpdateOverlayAccessibilityTest`) run on Robolectric. 
 downloads Robolectric's Android runtime jar. The Robolectric tests pin `sdk = [35]`: Robolectric's
 SDK 36 runtime needs Java 21, and CI uses Java 17 from `.tool-versions`.
 
-`UpstreamContractTest` and `TripDetailsViewContractTest` run real upstream code (see "Upstream
-contracts"). If one fails after a rebase, upstream changed a behavior the feature relies on: fix
-the feature, not the test. `UpstreamSelfCheckTest` tests the runtime checks.
+`UpstreamContractTest`, `TripDetailsViewContractTest` and `LiveTripKoinContractTest` run real
+upstream code (see "Upstream contracts"). If one fails after a rebase, upstream changed a behavior
+the feature relies on: fix the feature, not the test. `UpstreamSelfCheckTest` tests the runtime
+checks.
+
+`MirroredUpstreamTest` fingerprints the upstream code that the fork's trip page copies. If it fails
+after a rebase, compare each named upstream block with the fork's copy, update the copy if needed,
+then put the new fingerprint from the failure message in the test.
 
 Test on a phone:
 1. Follow a trip. Check that no Live Update starts and that "Track this trip" shows. Tap it.
@@ -175,10 +183,9 @@ Test on a phone:
    selected, in the fork and not in the official app if both are installed.
 8. With a destination, after the vehicle leaves the boarding station, tap the notification and
    "Return to trip tracking". Check that both open the fork's trip page with live times and the
-   destination marked, the map showing the vehicle and the destination, and that Back opens
-   stop details at the boarding station. There, check
-   that the pill shows "Return to trip tracking". Use a terminal destination, such as Alewife, at
-   least once. On the fork's trip page:
+   destination marked, and the map showing the vehicle and the destination. Check that Back
+   returns to where you were, also when you opened the page from the More page. Use a terminal
+   destination, such as Alewife, at least once. On the fork's trip page:
    - Tap the pill, pick another destination, and check that the page retargets.
    - Lock the phone for 5 minutes, unlock, and check that the times update.
    - Tap a stop in the list, and a stop pin on the map. Check that stop details for that stop
@@ -187,6 +194,14 @@ Test on a phone:
      the trip.
    - Back in the app, open upstream's trip page for a different trip. Check that it shows that
      trip, not the tracked one.
+   - From the More page, open the page with the pill and tap a stop. Check that stop details
+     opens (the app restarts its screen first).
+   - Cold start: swipe the app away in Recents, then tap the notification. Check that the page
+     shows the map, the list and live times, with the status bar readable on the route color in
+     light and dark mode. Turn on airplane mode and check that the error banner shows, then turn it
+     off and check that its retry works. Check that Back opens stop details at the boarding
+     station, and that the pill there shows "Return to trip tracking". Repeat with "Hide maps"
+     on: the list fills the screen and no map flashes first.
 9. Open the tracked trip from the boarding station with a destination. Check that the map pins
    both stations. Pan and zoom the map. Switch dark mode. Check that the destination pin stays.
 10. Tap "Stop". Check that the notification goes away.
@@ -196,9 +211,11 @@ Test on a phone:
 - The Live Update strings are in English only.
 - Back or a tapped stop leaves the fork's trip page for `MainActivity`. Back from there does not
   return to it.
+- Opened in a new process, the fork's trip page doesn't start Sentry, which `MainActivity` starts.
+  Crashes there before `MainActivity` opens are not reported to Sentry.
 - The fork's trip page has its own map, so a second Mapbox map is in memory while `MainActivity`
   is in the back stack. It loads the rail shapes again (the repository caches them).
 - The error banner view model is upstream's singleton. Its sheet route is set by whichever
   screen resumed last, so a banner can lag one screen change behind.
-- If `MainActivity` shows the More page when Back from the trip page opens stop details, the link
-  waits until the map and sheet page shows (see "Upstream contracts").
+- A tapped stop on the fork's trip page, opened from the More page, restarts `MainActivity`'s
+  screen to open stop details (see "Upstream contracts").

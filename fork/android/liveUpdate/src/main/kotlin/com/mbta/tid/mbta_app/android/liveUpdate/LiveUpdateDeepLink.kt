@@ -80,6 +80,17 @@ object LiveUpdateDeepLink {
     /** Stop details of [stopId] with nothing selected. */
     fun stopPath(stopId: String): String = "$BASE_URL/s/$stopId"
 
+    /** A link to MainActivity: its URL, and the state MainActivity parses it to. */
+    data class Link(val path: String, val state: DeepLinkState)
+
+    /** Stop details at the boarding stop with the trip selected. See [state]. */
+    fun boardingLink(request: LiveUpdateRequest, global: GlobalResponse?): Link =
+        Link(path(request, global), state(request, global))
+
+    /** Stop details of [stopId] with nothing selected. See [stopPath]. */
+    fun stopLink(stopId: String): Link =
+        Link(stopPath(stopId), DeepLinkState.Stop(stopId, null, null, null))
+
     /**
      * Opens [path] in this app's MainActivity. MainActivity.handleIntent reads the data of an
      * ACTION_VIEW intent. The explicit component keeps the official app from claiming the link.
