@@ -55,6 +55,28 @@ goes into every variant. An unknown source set name fails the build.
    diagnostics instead of breaking quietly.
 6. Add the feature to the table above.
 
+### Hosting upstream screens
+Lessons from `liveUpdate`'s `LiveTripActivity`, which hosts upstream's trip page and map:
+- Upstream's view models are Koin singletons that upstream's own pages keep reading. A fork screen
+  must never call setters on them, or the rider sees the fork's state back on upstream's page.
+  Build private instances in the fork activity's `ViewModelStore` with `viewModel(key = ...)`.
+- Resolve their dependencies with `currentKoinScope()`, not `getKoin()`. `getKoin()` can return an
+  old, stopped Koin (seen in tests).
+- Positional `get()` calls and named qualifiers fail only at runtime, and hand-built test modules
+  can't catch that. Build the view models from upstream's real modules in a test, as
+  `LiveTripKoinContractTest` does.
+- The compiler catches a renamed call, not a new effect upstream adds to code the fork copied.
+  Fingerprint every copied upstream block in `MirroredUpstreamTest`. When it fails, review the
+  fork's copy, then update the fingerprint.
+- A fork activity can start with no `MainActivity`: from a notification, with the app closed.
+  Nothing that `MainActivity.onCreate` and `ContentView` set up has run then (socket error
+  handlers, error banner backgrounding, Sentry, the Mapbox config), and settings may not have
+  loaded. Copy what the screen needs, and put the cold start in the phone checklist.
+- Upstream's More page ignores deep links. Record every link the fork sends to `MainActivity` in
+  `SentLinks`, so a link that stays pending gets the restart fallback.
+- Tests that build upstream's states by hand only check the fork's reading of them. Prefer a
+  contract test that runs real upstream code.
+
 ## Upstream canary
 `.github/workflows/fork-upstream-canary.yaml` runs on Mondays and Thursdays, and by hand from the
 Actions tab. In a scratch checkout, it rebases the fork onto `mbta/mobile_app` main, then runs the
