@@ -132,6 +132,14 @@ jobs:
             "See fork/README.md (Upstream canary) and fork/android/liveUpdate/README.md (Upstream contracts).")"
 
           if [ -n "${open}" ]; then
+            # A failure that lasts would comment on every run. Skip it when the latest note already
+            # reports the same stage on the same upstream commit.
+            last="$(gh issue view "${open}" --repo "${repo}" --json body,comments \
+              --jq '([.body] + [.comments[].body]) | last')"
+            if [[ "${last}" == *"${upstream_url}"* && "${last}" == *"${stage}"* ]]; then
+              echo "Issue #${open} already reports this failure on this upstream commit."
+              exit 0
+            fi
             gh issue comment "${open}" --repo "${repo}" --body "${body}"
           else
             gh label create "${label}" --repo "${repo}" --color B60205 \
