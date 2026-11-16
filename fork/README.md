@@ -41,8 +41,8 @@ goes into every variant. An unknown source set name fails the build.
 2. Hook into the app at runtime, not by editing upstream: observe public Koin singletons and
    StateFlows, start up from a `ContentProvider` in the feature manifest, and use window overlays.
    Approved exceptions mark each upstream line with `// fork(<feature>)` and are listed in the
-   feature's README. Today that is only `liveUpdate`: the trip page deep link in
-   `DeepLinkState.kt` and `MapAndSheetPage.kt`.
+   feature's README. Today there are none. To open a screen upstream has no deep link for, host
+   upstream's composables in a fork activity, as `liveUpdate`'s `LiveTripActivity` does.
 3. If the feature needs build settings, add `feature.gradle`. Register each hook with
    `forkExpect('<feature>: <hook>')` and mark it with `forkDone('<feature>: <hook>')` when it runs.
    The loader fails the build if a hook never ran. See `release/feature.gradle`.

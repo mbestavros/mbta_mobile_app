@@ -203,24 +203,62 @@ fun LiveUpdateOverlay(
         )
     }
     if (sheetOpen && current != null) {
-        DestinationSheet(
-            current,
-            onDismiss = { sheetOpen = false },
-            onChoose = { choice ->
-                controller.setDestination(choice?.stopId, choice?.stopSequence)
-                sheetOpen = false
-            },
-            onStop = {
-                controller.stop()
-                sheetOpen = false
-            },
-        )
+        TrackedDestinationSheet(controller, current, onClose = { sheetOpen = false })
     }
 }
 
 /**
- * Opens the tracked trip with the stop deep link. The map and sheet page handles the link and
- * clears it on its next frame.
+ * The pill on [LiveTripActivity]'s trip page. The page shows the tracked trip, so the pill opens
+ * the destination sheet, as on upstream's trip page of the tracked trip. It goes away if tracking
+ * stops or moves to another trip.
+ */
+@Composable
+internal fun LiveTripPill(
+    tripId: String,
+    controller: LiveUpdateController = koinInject(),
+    globalRepository: IGlobalRepository = koinInject(),
+) {
+    val session by controller.session.collectAsState()
+    val repositoryGlobal by globalRepository.state.collectAsState()
+    val tracked = session?.takeIf { it.request.tripId == tripId }
+    var sheetOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(tracked == null) { if (tracked == null) sheetOpen = false }
+    val content = tracked?.let { current ->
+        LiveUpdatePillModel.trackedRoute(current, repositoryGlobal)?.let {
+            trackedPillContent(current, it, showsPicker = true)
+        }
+    }
+    AnimatedLiveUpdatePill(content, bottomPadding = 16.dp) { if (tracked != null) sheetOpen = true }
+    if (sheetOpen && tracked != null) {
+        TrackedDestinationSheet(controller, tracked, onClose = { sheetOpen = false })
+    }
+}
+
+@Composable
+private fun TrackedDestinationSheet(
+    controller: LiveUpdateController,
+    session: LiveUpdateSession,
+    onClose: () -> Unit,
+) {
+    DestinationSheet(
+        session,
+        onDismiss = onClose,
+        onChoose = { choice ->
+            controller.setDestination(choice?.stopId, choice?.stopSequence)
+            onClose()
+        },
+        onStop = {
+            controller.stop()
+            onClose()
+        },
+    )
+}
+
+/**
+ * Opens the tracked trip (see [LiveUpdateDeepLink]). Aboard, that is [LiveTripActivity].
+ *
+ * Before boarding, it is stop details, opened with the stop deep link. The map and sheet page
+ * handles the link and clears it on its next frame.
  *
  * The More page does not handle deep links. The overlay can't see upstream's navigation, so it
  * can't tell the More page from the map entry screen. If the link is still pending after a timeout,
@@ -241,7 +279,12 @@ private fun returnToTrip(
     val global = session.snapshot?.global
     val phase = session.state?.phase
     val vehicleId = LiveUpdateDeepLink.vehicleId(session.request, session.snapshot)
-    val target = LiveUpdateDeepLink.state(session.request, phase, vehicleId, global)
+    val opened = LiveUpdateDeepLink.target(session.request, phase, vehicleId, global)
+    if (opened is LiveUpdateDeepLink.Target.TripPage) {
+        activity.startActivity(opened.intent(activity))
+        return
+    }
+    val target = LiveUpdateDeepLink.state(session.request, global)
     activity.deepLinkStateFlow.value = target
     scope.launch {
         delay(UpstreamContract.DEEP_LINK_HANDLED_TIMEOUT_MS)
@@ -258,10 +301,8 @@ private fun returnToTrip(
                 LiveUpdateDiagnostics(activity).record("deep_link_restart reason=still_pending")
                 activity.clearDeepLink()
                 activity.startActivity(
-                    LiveUpdateDeepLink.intent(
-                            activity,
-                            LiveUpdateDeepLink.path(session.request, phase, vehicleId, global),
-                        )
+                    opened
+                        .intent(activity)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                 )
             }

@@ -34,7 +34,11 @@ class LiveUpdateNotificationTest {
         )
 
     private fun content(state: LiveUpdateState, text: LiveUpdateText = this.text) =
-        LiveUpdateNotification.ongoingContent(state, text, "/s/place-pktrm")
+        LiveUpdateNotification.ongoingContent(
+            state,
+            text,
+            LiveUpdateDeepLink.Target.StopDetails("/s/place-pktrm"),
+        )
 
     @Test
     fun `content is the same when only the exact time changes`() {

@@ -20,9 +20,11 @@ notification with a progress bar.
 - "Return to trip tracking" and the notification open the page for where you are:
   - While you wait for the vehicle, they open stop details for the boarding station with the trip
     selected, so you can also see other departures.
-  - After the vehicle leaves the boarding station, you are on it. They open the trip page, on top
-    of stop details, so Back returns to the station. The trip page targets the destination, so the
-    map fits the vehicle and the destination and upstream pins the destination.
+  - After the vehicle leaves the boarding station, you are on it. They open the fork's trip page
+    (`LiveTripActivity`): upstream's trip list, header and alerts, without the map. It targets the
+    destination, so upstream's list marks it. While the trip is tracked, the page follows a new
+    destination or vehicle, and the pill on it opens the destination list. Back opens stop details
+    at the boarding station. A tap on a stop opens that stop's details.
 - If you open the tracked trip's page yourself (it targets the boarding station), the map also
   pins the destination station. The pin stays while you move the map.
 - The pill has the route colors and the route badge on its left, like the notification. It waits
@@ -60,21 +62,7 @@ notification with a progress bar.
   connected watches.
 
 ## How it connects to the app
-The feature changes upstream in one place, approved as an exception to the fork rule. Each line is
-marked `// fork(liveUpdate)`:
-
-- `shared/.../routes/DeepLinkState.kt`: `DeepLinkState.Stop` has the optional fields `vehicleId`,
-  `follow` and `followStopId`, read from `/v/<vehicle>` and `/follow` or `/follow/<stop>` URL
-  segments, and a `followRoute` for the trip page. The trip page targets `followStopId`, else the
-  stop. Stop details underneath always opens the boarding station, so a terminal destination with
-  no departures can't hang it. The fields have defaults, so other callers don't change. iOS reads only `sheetRoute`, so it
-  still builds and opens stop details for these links.
-- `androidApp/.../pages/MapAndSheetPage.kt`: one line opens `followRoute` after `sheetRoute`.
-
-`DeepLinkFollowTest` in this feature tests the parser edit. On a rebase conflict in these files,
-keep upstream's version and add the marked lines back.
-
-Everything else is in this folder:
+The feature does not change upstream. Everything is in this folder:
 
 | Part | How it connects to the app |
 |---|---|
@@ -83,7 +71,8 @@ Everything else is in this folder:
 | `LiveUpdateInitializer` | A content provider that starts the feature after `Application.onCreate` |
 | `TripPage` | Reads the map and trip details view models to find the open trip page. It uses the trip details `context`, not `following`, which turns off when you move the map. |
 | `LiveUpdateOverlayInstaller` | Adds the pill above `MainActivity`'s content |
-| `LiveUpdateDeepLink` | Opens the trip with the app's stop deep link, as an `ACTION_VIEW` intent to `MainActivity` |
+| `LiveUpdateDeepLink` | Opens the trip: stop details with the app's stop deep link, as an `ACTION_VIEW` intent to `MainActivity`, or the trip page in `LiveTripActivity` |
+| `LiveTripActivity`, `LiveTripScreen` | The fork's trip page, declared in the feature manifest (`exported=false`). It hosts upstream's `TripDetailsView` with its own `TripDetailsViewModel` and `TripDetailsPageViewModel`, not the Koin singletons, so upstream's trip page keeps its own trip. It opens the app's socket while it is resumed, as `ContentView` does for `MainActivity`. |
 | `LiveUpdateMapPin` | Adds a Mapbox layer to the map's style for the destination pin |
 | `LiveUpdateService` | A foreground service with its own websocket. The app closes its socket in the background. |
 
@@ -96,6 +85,12 @@ The feature uses these upstream APIs. If upstream changes one, the fork does not
   interfaces for trips, trip predictions, vehicles and global data.
 - `TripDetailsStopList.fromPieces`, `TripDetailsStopList.splitForTarget` and `Stop.resolveParent`.
 - `DeepLinkState.Stop`, `DeepLinkState.from` and `GlobalResponse.getLineOrRoute`.
+- For the trip page: the `TripDetailsViewModel` and `TripDetailsPageViewModel` constructors, the
+  `coroutineDispatcherIO` Koin name, `TripDetailsPageFilter`, `IErrorBannerViewModel.setSheetRoute`,
+  `PhoenixSocket.attach`/`detach`, and in `androidApp`: `TripDetailsView`, `TripDetailsPageHeader`,
+  `TripRouteAccents`, `ErrorBanner`, `ChannelDebugView`, `ScrollSeparatorColumn`,
+  `AlertDetailsPage`, `ExplainerPage`, `ModalRoutes`, `getGlobalData`, `subscribeToAlerts`,
+  `timer`, `IsLoadingSheetContents` and `R.string.loading`.
 - `StopLayerGenerator.createStopLayers`, `StopLayerGenerator.State.StopDetails`,
   `StopFeaturesBuilder.stopSourceId`, the `SymbolLayer` style model, `ColorPalette`, and in
   `androidApp`, `SymbolLayer.toMapbox()` and `MapLayerManager.puckAnchorLayerId`.
@@ -126,6 +121,7 @@ what guards it. Start there when a contract breaks, and add a new contract there
 | `LiveUpdateMapPin` finds the Mapbox `MapView` in the view tree (Compose's `MapboxMap` hosts it through `AndroidView`), and adds its layer on upstream's stop source, below the puck anchor slot. It checks every second while shown and adds the layer back if the style dropped it. If this breaks, the pin is missing. The rest of the feature still works. | Runtime check `map_pin_not_shown`: 15 checks in a row (about 15 seconds) find no `MapView`, no stop source, no puck anchor layer, or fail to add the layer. |
 | `LiveUpdateOverlayInstaller` adds the overlay in a task posted from `onActivityCreated`, and relies on `MainActivity.onCreate` calling `setContent` first. `setContent` reuses a `ComposeView` that is already the first child of the content view, so in the other order the overlay would replace upstream's UI. | Runtime check `overlay_install_order`: the first child of the content view is not upstream's `ComposeView`. If the content view is empty, the installer skips the pill. |
 | Only the map and sheet page handles deep links, on its next frame. The More page ignores them. "Return to trip tracking" sets the link. | 1.5 seconds later, a link still pending is handled by `pendingLinkOutcome`. From a screen where the map shows its overview, the More page may be open, so the overlay restarts `MainActivity` with the link as a new task. This drops the saved navigation state and opens the map and sheet page. From any other screen, it is runtime check `deep_link_unhandled`. |
+| `LiveTripScreen` rebuilds upstream's `TripDetailsPage` (its `LaunchedEffect`s and layout) around `TripDetailsView`. `TripDetailsView` must use the view model it is given. The app's socket must open only while an activity attaches it, and the error banner shows only errors for the sheet route set with `setSheetRoute`. | `LiveTripScreenTest` renders it with the real `TripDetailsView` and checks the context, the filters, the socket attach and the sheet route. If upstream's `TripDetailsPage` gains a new effect, the fork's page lacks it: compare the two after a rebase. |
 | What `MapViewModel.LayerState` (`StopSelected`, `TripSelected`, `Overview`) means on each page, read by `TripPage`, `StationPage` and the overlay. | Not checked against a real `MapViewModel`. The tests build the states by hand. Run phone steps 4, 5 and 8 after a rebase. |
 | `TAB_BAR_HEIGHT` (72 dp) guesses the height of upstream's bottom tab row. The pill sits above it on the map overview. | Not checked. Look at the pill above the tabs after a rebase. |
 
@@ -169,9 +165,15 @@ Test on a phone:
 7. Tap the notification before the vehicle departs. Check that stop details opens with the trip
    selected, in the fork and not in the official app if both are installed.
 8. With a destination, after the vehicle leaves the boarding station, tap the notification and
-   "Return to trip tracking". Check that both open the trip page with the map showing both the
-   vehicle and the destination, and that Back returns to the station. There, check that the pill
-   shows "Return to trip tracking". Use a terminal destination, such as Alewife, at least once.
+   "Return to trip tracking". Check that both open the fork's trip page with live times and the
+   destination marked, and that Back opens stop details at the boarding station. There, check
+   that the pill shows "Return to trip tracking". Use a terminal destination, such as Alewife, at
+   least once. On the fork's trip page:
+   - Tap the pill, pick another destination, and check that the page retargets.
+   - Lock the phone for 5 minutes, unlock, and check that the times update.
+   - Tap a stop in the list. Check that stop details for that stop opens.
+   - Back in the app, open upstream's trip page for a different trip. Check that it shows that
+     trip, not the tracked one.
 9. Open the tracked trip from the boarding station with a destination. Check that the map pins
    both stations. Pan and zoom the map. Switch dark mode. Check that the destination pin stays.
 10. Tap "Stop". Check that the notification goes away.
@@ -179,3 +181,9 @@ Test on a phone:
 ## Known limitations
 - The Live Update does not show service alerts. The trip page still shows them.
 - The Live Update strings are in English only.
+- The fork's trip page has no map. Back or a tapped stop leaves it for `MainActivity`; Back from
+  there does not return to it.
+- The error banner view model is upstream's singleton. Its sheet route is set by whichever
+  screen resumed last, so a banner can lag one screen change behind.
+- If `MainActivity` shows the More page when Back from the trip page opens stop details, the link
+  waits until the map and sheet page shows (see "Upstream contracts").

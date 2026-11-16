@@ -1,15 +1,13 @@
 package com.mbta.tid.mbta_app.android.liveUpdate
 
-import com.mbta.tid.mbta_app.model.LineOrRoute
+import com.mbta.tid.mbta_app.model.LocationType
 import com.mbta.tid.mbta_app.model.ObjectCollectionBuilder
+import com.mbta.tid.mbta_app.model.Route
 import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import com.mbta.tid.mbta_app.model.Vehicle
 import com.mbta.tid.mbta_app.model.response.GlobalResponse
 import com.mbta.tid.mbta_app.routes.DeepLinkState
-import com.mbta.tid.mbta_app.routes.SheetRoutes
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class LiveUpdateDeepLinkTest {
@@ -19,105 +17,91 @@ class LiveUpdateDeepLinkTest {
     private val plainRequest =
         f.requestWithDestination.copy(stopId = "place-pktrm", destinationStopId = "place-alfcl")
 
-    @Test
-    fun `waiting opens stop details with the trip selected`() {
-        assertEquals(
-            "https://go.mbta.com/s/${f.stopC.id}/r/Red/d/0/t/trip1",
-            LiveUpdateDeepLink.path(f.request, LiveUpdatePhase.Waiting, "v1", f.global),
-        )
-        assertEquals(
-            DeepLinkState.Stop(f.stopC.id, "Red", 0, "trip1"),
-            LiveUpdateDeepLink.state(f.request, LiveUpdatePhase.Waiting, "v1", f.global),
-        )
-    }
-
-    @Test
-    fun `no phase yet opens stop details`() {
-        val state = LiveUpdateDeepLink.state(f.request, null, "v1", f.global)
-
-        assertFalse(state.follow)
-        assertNull(state.followRoute)
-    }
-
-    @Test
-    fun `parsed waiting path gives the same state`() {
-        assertEquals(
-            LiveUpdateDeepLink.state(plainRequest, LiveUpdatePhase.Waiting, "v1", f.global),
-            DeepLinkState.from(
-                LiveUpdateDeepLink.path(plainRequest, LiveUpdatePhase.Waiting, "v1", f.global),
-            ),
-        )
-    }
-
-    @Test
-    fun `riding opens the trip page for the destination over the boarding station`() {
-        val path = LiveUpdateDeepLink.path(plainRequest, LiveUpdatePhase.Riding, "v1", f.global)
-
-        assertEquals(
-            "https://go.mbta.com/s/place-pktrm/r/Red/d/0/t/trip1/v/v1/follow/place-alfcl",
-            path,
-        )
-        val parsed = DeepLinkState.from(path) as DeepLinkState.Stop
-        // Back from the trip page goes to the boarding station.
-        assertEquals("place-pktrm", parsed.sheetRoute.stopId)
-        assertEquals(
-            LiveUpdateDeepLink.state(plainRequest, LiveUpdatePhase.Riding, "v1", f.global),
-            parsed,
-        )
-        assertEquals(
-            SheetRoutes.TripDetails(
-                TripDetailsPageFilter(
-                    "trip1",
-                    "v1",
-                    LineOrRoute.Id.fromString("Red"),
-                    0,
-                    "place-alfcl",
-                    null,
-                ),
-            ),
-            parsed.followRoute,
-        )
-    }
-
-    @Test
-    fun `the trip page targets the destination's station`() {
+    /** A station with one platform, to check that the trip page targets the station. */
+    private fun stationAndPlatform(): Triple<String, String, GlobalResponse> {
         val objects = ObjectCollectionBuilder("LiveUpdateDeepLinkTest")
         val station = objects.stop {
             id = "place-alfcl"
-            locationType = com.mbta.tid.mbta_app.model.LocationType.STATION
+            locationType = LocationType.STATION
         }
         val platform = objects.stop {
             id = "70061"
             parentStationId = station.id
         }
-        val global = GlobalResponse(objects)
-        val request = plainRequest.copy(destinationStopId = platform.id)
+        return Triple(station.id, platform.id, GlobalResponse(objects))
+    }
 
-        assertEquals(station.id, LiveUpdateDeepLink.followStopId(request, global))
-        assertNull(LiveUpdateDeepLink.followStopId(f.request, global))
-        assertNull(
-            LiveUpdateDeepLink.state(request, LiveUpdatePhase.Waiting, "v1", global).followStopId,
+    @Test
+    fun `the stop link opens stop details with the trip selected`() {
+        assertEquals(
+            "https://go.mbta.com/s/${f.stopC.id}/r/Red/d/0/t/trip1",
+            LiveUpdateDeepLink.path(f.request, f.global),
+        )
+        assertEquals(
+            DeepLinkState.Stop(f.stopC.id, "Red", 0, "trip1"),
+            LiveUpdateDeepLink.state(f.request, f.global),
         )
     }
 
     @Test
-    fun `riding without a vehicle still opens the trip page`() {
-        val path = LiveUpdateDeepLink.path(plainRequest, LiveUpdatePhase.Riding, null, f.global)
-
-        assertEquals("https://go.mbta.com/s/place-pktrm/r/Red/d/0/t/trip1/follow/place-alfcl", path)
-        val parsed = DeepLinkState.from(path) as DeepLinkState.Stop
-        assertNull(parsed.vehicleId)
-        assertEquals("trip1", parsed.followRoute?.filter?.tripId)
+    fun `the parsed stop link gives the same state`() {
+        assertEquals(
+            LiveUpdateDeepLink.state(plainRequest, f.global),
+            DeepLinkState.from(LiveUpdateDeepLink.path(plainRequest, f.global)),
+        )
     }
 
     @Test
-    fun `riding without a destination targets the boarding stop`() {
-        val request = plainRequest.copy(destinationStopId = null)
-        val path = LiveUpdateDeepLink.path(request, LiveUpdatePhase.Riding, "v1", f.global)
+    fun `the plain stop link opens stop details with nothing selected`() {
+        val path = LiveUpdateDeepLink.stopPath("place-alfcl")
 
-        assertEquals("https://go.mbta.com/s/place-pktrm/r/Red/d/0/t/trip1/v/v1/follow", path)
-        val parsed = DeepLinkState.from(path) as DeepLinkState.Stop
-        assertEquals("place-pktrm", parsed.followRoute?.filter?.stopId)
+        assertEquals("https://go.mbta.com/s/place-alfcl", path)
+        assertEquals(DeepLinkState.Stop("place-alfcl", null, null, null), DeepLinkState.from(path))
+    }
+
+    @Test
+    fun `waiting or no phase opens stop details, riding opens the trip page`() {
+        val stopDetails =
+            LiveUpdateDeepLink.Target.StopDetails(LiveUpdateDeepLink.path(f.request, f.global))
+
+        assertEquals(stopDetails, LiveUpdateDeepLink.target(f.request, null, "v1", f.global))
+        assertEquals(
+            stopDetails,
+            LiveUpdateDeepLink.target(f.request, LiveUpdatePhase.Waiting, "v1", f.global),
+        )
+        assertEquals(
+            LiveUpdateDeepLink.Target.TripPage(f.request, "v1"),
+            LiveUpdateDeepLink.target(f.request, LiveUpdatePhase.Riding, "v1", f.global),
+        )
+    }
+
+    @Test
+    fun `the trip page targets the destination's station`() {
+        val (stationId, platformId, global) = stationAndPlatform()
+        val request = plainRequest.copy(destinationStopId = platformId)
+
+        assertEquals(
+            TripDetailsPageFilter(
+                "trip1",
+                "v1",
+                Route.Id("Red"),
+                0,
+                stationId,
+                request.destinationStopSequence,
+            ),
+            LiveUpdateDeepLink.tripPageFilter(request, "v1", global),
+        )
+    }
+
+    @Test
+    fun `the trip page without a destination targets the boarding stop`() {
+        val request = plainRequest.copy(destinationStopId = null)
+
+        val filter = LiveUpdateDeepLink.tripPageFilter(request, null, f.global)
+
+        assertEquals("place-pktrm", filter.stopId)
+        assertEquals(request.stopSequence, filter.stopSequence)
+        assertEquals(null, filter.vehicleId)
     }
 
     @Test
@@ -135,18 +119,9 @@ class LiveUpdateDeepLinkTest {
 
     @Test
     fun `platforms resolve to their station`() {
-        val objects = ObjectCollectionBuilder("LiveUpdateDeepLinkTest")
-        val station = objects.stop {
-            id = "place-alfcl"
-            locationType = com.mbta.tid.mbta_app.model.LocationType.STATION
-        }
-        val platform = objects.stop {
-            id = "70061"
-            parentStationId = station.id
-        }
-        val global = GlobalResponse(objects)
+        val (stationId, platformId, global) = stationAndPlatform()
 
-        assertEquals(station.id, LiveUpdateDeepLink.stationId(platform.id, global))
+        assertEquals(stationId, LiveUpdateDeepLink.stationId(platformId, global))
         assertEquals("unknown", LiveUpdateDeepLink.stationId("unknown", global))
     }
 

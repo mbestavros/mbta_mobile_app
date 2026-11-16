@@ -80,7 +80,7 @@ object LiveUpdateNotification {
         val boardingPosition: Int,
         val destinationPosition: Int?,
         val routeColor: String,
-        val deepLinkPath: String?,
+        val target: LiveUpdateDeepLink.Target?,
         val routePill: RoutePillSpec?,
         val routeType: RouteType?,
         /** The marker is shown only while the vehicle position is known. */
@@ -90,7 +90,7 @@ object LiveUpdateNotification {
     fun ongoingContent(
         state: LiveUpdateState,
         text: LiveUpdateText,
-        deepLinkPath: String?,
+        target: LiveUpdateDeepLink.Target?,
     ): OngoingContent =
         OngoingContent(
             text,
@@ -99,7 +99,7 @@ object LiveUpdateNotification {
             state.boardingPosition,
             state.destinationPosition,
             state.routeColor,
-            deepLinkPath,
+            target,
             state.routePill,
             state.routeType,
             showTracker(state),
@@ -108,16 +108,16 @@ object LiveUpdateNotification {
     private fun showTracker(state: LiveUpdateState): Boolean =
         state.routeType != null && state.stopsAway != null
 
-    /** @param deepLinkPath opens the tracked trip when the user taps the notification. */
+    /** @param target opens the tracked trip when the user taps the notification. */
     fun ongoing(
         context: Context,
         state: LiveUpdateState,
         text: LiveUpdateText,
-        deepLinkPath: String?,
+        target: LiveUpdateDeepLink.Target?,
     ): Notification {
         val color = parseRouteColor(state.routeColor)
         val builder =
-            baseBuilder(context, openAppIntent(context, deepLinkPath))
+            baseBuilder(context, openAppIntent(context, target))
                 .setContentTitle(text.title)
                 .setContentText(text.text)
                 .setSubText(text.subText)
@@ -254,19 +254,22 @@ object LiveUpdateNotification {
     }
 
     /**
-     * With [deepLinkPath], MainActivity opens stop details with the trip selected.
+     * With [target], opens the tracked trip: MainActivity's stop details with the trip selected, or
+     * [LiveTripActivity] once the rider is aboard.
      *
-     * The system tells PendingIntents apart by their data URI too, so each distinct path is its own
-     * entry, even with one request code. A session uses about two paths (boarding, then aboard), so
-     * this is bounded.
+     * The system tells PendingIntents apart by their component and data URI too, so each stop link
+     * and the trip page are their own entries, even with one request code. A session uses about two
+     * (boarding, then aboard), so this is bounded. Extras are not part of it, so
+     * FLAG_UPDATE_CURRENT keeps the trip page's extras current.
      */
-    private fun openAppIntent(context: Context, deepLinkPath: String? = null): PendingIntent? {
+    private fun openAppIntent(
+        context: Context,
+        target: LiveUpdateDeepLink.Target? = null,
+    ): PendingIntent? {
         val intent =
-            if (deepLinkPath != null) {
-                LiveUpdateDeepLink.intent(context, deepLinkPath)
-            } else {
-                context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return null
-            }
+            target?.intent(context)
+                ?: context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?: return null
         intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(
             context,

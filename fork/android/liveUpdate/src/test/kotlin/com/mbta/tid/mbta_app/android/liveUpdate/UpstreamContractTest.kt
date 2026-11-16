@@ -3,6 +3,7 @@ package com.mbta.tid.mbta_app.android.liveUpdate
 import android.app.Application
 import android.content.Intent
 import com.mbta.tid.mbta_app.android.MainActivity
+import com.mbta.tid.mbta_app.routes.DeepLinkState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -35,17 +36,17 @@ class UpstreamContractTest {
         val request = f.request.copy(stopId = "place-pktrm")
         val cases =
             listOf(
-                Triple(request, LiveUpdatePhase.Waiting, null),
-                Triple(request.withDestination("place-harsq", 50), LiveUpdatePhase.Riding, "v1"),
+                LiveUpdateDeepLink.path(request, f.global) to
+                    LiveUpdateDeepLink.state(request, f.global),
+                LiveUpdateDeepLink.stopPath("place-harsq") to
+                    DeepLinkState.Stop("place-harsq", null, null, null),
             )
-        for ((request, phase, vehicleId) in cases) {
-            val path = LiveUpdateDeepLink.path(request, phase, vehicleId, f.global)
-
+        for ((path, state) in cases) {
             activity.handleIntent(LiveUpdateDeepLink.intent(context, path))
 
             assertEquals(
                 "MainActivity.handleIntent for $path",
-                LiveUpdateDeepLink.state(request, phase, vehicleId, f.global),
+                state,
                 activity.deepLinkStateFlow.value,
             )
             activity.clearDeepLink()

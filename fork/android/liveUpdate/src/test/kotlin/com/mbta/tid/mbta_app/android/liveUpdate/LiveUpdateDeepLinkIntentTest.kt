@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import com.mbta.tid.mbta_app.android.MainActivity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -20,7 +21,7 @@ class LiveUpdateDeepLinkIntentTest {
     @Test
     fun `intent is a view intent for this app's MainActivity`() {
         val context = RuntimeEnvironment.getApplication()
-        val path = LiveUpdateDeepLink.path(f.request, LiveUpdatePhase.Waiting, "v1", f.global)
+        val path = LiveUpdateDeepLink.path(f.request, f.global)
 
         val intent = LiveUpdateDeepLink.intent(context, path)
 
@@ -29,5 +30,24 @@ class LiveUpdateDeepLinkIntentTest {
         assertEquals(path, intent.dataString)
         assertEquals(context.packageName, intent.component?.packageName)
         assertEquals(MainActivity::class.java.name, intent.component?.className)
+    }
+
+    @Test
+    fun `the trip page target opens this app's trip page for the tracked trip`() {
+        val context = RuntimeEnvironment.getApplication()
+        val request = f.requestWithDestination
+
+        val intent = LiveUpdateDeepLink.Target.TripPage(request, "v1").intent(context)
+
+        assertEquals(context.packageName, intent.component?.packageName)
+        assertEquals(LiveTripActivity::class.java.name, intent.component?.className)
+        assertEquals(LiveTripActivity.Opened(request, "v1"), LiveTripActivity.read(intent))
+        assertEquals(
+            LiveTripActivity.Opened(request, null),
+            LiveTripActivity.read(
+                LiveUpdateDeepLink.Target.TripPage(request, null).intent(context),
+            ),
+        )
+        assertNull(LiveTripActivity.read(Intent(context, LiveTripActivity::class.java)))
     }
 }

@@ -292,7 +292,6 @@ fun MapAndSheetPage(
             }
             is DeepLinkState.Stop -> {
                 navController.navigate(state.sheetRoute)
-                state.followRoute?.let { navController.navigate(it) } // fork(liveUpdate)
             }
         }
         deepLinkCallback()

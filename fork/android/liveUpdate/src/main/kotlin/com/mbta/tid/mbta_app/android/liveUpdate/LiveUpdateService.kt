@@ -350,18 +350,17 @@ class LiveUpdateService : Service() {
 
                 val text = LiveUpdateTextFormatter.format(state, strings)
                 controller?.publish(LiveUpdateSession(currentRequest, snapshot, anchor, state))
-                val deepLinkPath =
-                    LiveUpdateDeepLink.path(
+                val target =
+                    LiveUpdateDeepLink.target(
                         currentRequest,
                         phase,
                         LiveUpdateDeepLink.vehicleId(currentRequest, snapshot),
                         snapshot.global,
                     )
-                val content = LiveUpdateNotification.ongoingContent(state, text, deepLinkPath)
+                val content = LiveUpdateNotification.ongoingContent(state, text, target)
                 if (content != lastPosted) {
                     lastPosted = content
-                    val notification =
-                        LiveUpdateNotification.ongoing(this, state, text, deepLinkPath)
+                    val notification = LiveUpdateNotification.ongoing(this, state, text, target)
                     lastNotification = notification
                     stats.posts.incrementAndGet()
                     post(LiveUpdateNotification.ONGOING_ID, notification)

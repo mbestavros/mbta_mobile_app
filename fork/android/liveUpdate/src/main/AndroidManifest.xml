@@ -15,6 +15,12 @@
                 android:value="Live transit vehicle tracking that the user starts" />
         </service>
 
+        <!-- The tracked trip's page. Opened only by the app: the notification and the pill. -->
+        <activity
+            android:name="com.mbta.tid.mbta_app.android.liveUpdate.LiveTripActivity"
+            android:exported="false"
+            android:launchMode="singleTop" />
+
         <provider
             android:name="com.mbta.tid.mbta_app.android.liveUpdate.LiveUpdateInitializer"
             android:authorities="${applicationId}.liveupdate-init"

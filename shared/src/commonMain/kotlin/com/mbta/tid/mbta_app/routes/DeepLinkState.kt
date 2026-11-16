@@ -3,7 +3,6 @@ package com.mbta.tid.mbta_app.routes
 import com.mbta.tid.mbta_app.model.LineOrRoute
 import com.mbta.tid.mbta_app.model.StopDetailsFilter
 import com.mbta.tid.mbta_app.model.TripDetailsFilter
-import com.mbta.tid.mbta_app.model.TripDetailsPageFilter
 import io.ktor.http.Url
 
 public sealed class DeepLinkState {
@@ -17,11 +16,6 @@ public sealed class DeepLinkState {
         val routeId: String?,
         val directionId: Int?,
         val tripId: String?,
-        // fork(liveUpdate): open the trip page on top of stop details, like tapping Follow. The
-        // trip page targets followStopId if set, else stopId.
-        val vehicleId: String? = null,
-        val follow: Boolean = false,
-        val followStopId: String? = null,
     ) : DeepLinkState() {
         val sheetRoute: SheetRoutes.StopDetails =
             SheetRoutes.StopDetails(
@@ -33,21 +27,6 @@ public sealed class DeepLinkState {
                 },
                 tripId?.let { TripDetailsFilter(it, null, null, false) },
             )
-
-        // fork(liveUpdate): the trip page to open after sheetRoute, or null.
-        val followRoute: SheetRoutes.TripDetails? =
-            if (follow && tripId != null && routeId != null && directionId != null) {
-                SheetRoutes.TripDetails(
-                    TripDetailsPageFilter(
-                        tripId,
-                        vehicleId,
-                        LineOrRoute.Id.fromString(routeId),
-                        directionId,
-                        followStopId ?: stopId,
-                        null,
-                    ),
-                )
-            } else null
     }
 
     public companion object {
@@ -83,13 +62,7 @@ public sealed class DeepLinkState {
             val routeId = segmentAfter(url, routeKeys)
             val directionId = segmentAfter(url, directionKeys)?.toIntOrNull()?.coerceIn(0, 1)
             val tripId = segmentAfter(url, tripKeys)
-            // fork(liveUpdate): optional vehicle and follow segments, as /follow or /follow/<stop>.
-            val vehicleId = segmentAfter(url, listOf("v", "vehicle"))
-            val follow = url.segments.any { it.lowercase() == "follow" }
-            val followStopId = segmentAfter(url, listOf("follow"))
-            return stopId?.let {
-                Stop(it, routeId, directionId, tripId, vehicleId, follow, followStopId)
-            }
+            return stopId?.let { Stop(it, routeId, directionId, tripId) }
         }
 
         private fun segmentAfter(url: Url, keys: List<String>): String? {
